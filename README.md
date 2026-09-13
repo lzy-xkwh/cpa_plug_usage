@@ -48,7 +48,10 @@ access_token, api_key, token
 
 ## 从 CPA 插件商店安装
 
-本仓库包含可直接用于 CPA 自定义插件商店的 `registry.json`。在 CPA 的
+本仓库包含可直接用于 CPA 自定义插件商店的 `registry.json`。当前清单使用
+CPA 插件商店 schema v2 的 direct artifact 安装方式，直接下载固定 Release
+资产并校验 SHA-256，不需要 CPA 调用 GitHub Releases API，因此可以绕过匿名
+GitHub API 的速率限制。在 CPA 的
 `config.yaml` 中添加：
 
 ```yaml

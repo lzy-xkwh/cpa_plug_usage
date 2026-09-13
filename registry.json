@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugins": [
     {
       "id": "third-party-balance",
@@ -15,7 +15,24 @@
         "balance",
         "new-api",
         "one-api"
-      ]
+      ],
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.1/third-party-balance_0.1.1_linux_amd64.zip",
+            "sha256": "0ee1d5a2eb1c2ba4f5e9e59fa3d56a333b966b56b0b9b4f9d748f5df48eb67f8"
+          },
+          {
+            "goos": "linux",
+            "goarch": "arm64",
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.1/third-party-balance_0.1.1_linux_arm64.zip",
+            "sha256": "a1f0c3ab0e3089a8f85a18aa53fb9236753998260b36cea4ea6613002b4cee11"
+          }
+        ]
+      }
     }
   ]
 }
