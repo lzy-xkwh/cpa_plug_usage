@@ -22,14 +22,14 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.1/third-party-balance_0.1.1_linux_amd64.zip",
-            "sha256": "0ee1d5a2eb1c2ba4f5e9e59fa3d56a333b966b56b0b9b4f9d748f5df48eb67f8"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.2/third-party-balance_0.1.2_linux_amd64.zip",
+            "sha256": "c62dba42318d02a52cfabaa08affe6d02e073155165278c3e34df0568852efe8"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.1/third-party-balance_0.1.1_linux_arm64.zip",
-            "sha256": "a1f0c3ab0e3089a8f85a18aa53fb9236753998260b36cea4ea6613002b4cee11"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.2/third-party-balance_0.1.2_linux_arm64.zip",
+            "sha256": "c06990996705d741e5ad342bb431513eb9e7241bf90f008a4164a7c41478e032"
           }
         ]
       }
