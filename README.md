@@ -59,7 +59,7 @@ plugins:
       apply-to:
         - registry
         - artifact
-      type: github-token
+      type: bearer
       token-env: "CLIPROXY_PLUGIN_STORE_TOKEN"
 ```
 
