@@ -7,6 +7,7 @@
       "description": "Reads balance and quota information from New API, One API, and compatible third-party gateways.",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
+      "version": "0.1.0",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
