@@ -7,7 +7,7 @@
       "description": "Reads balance and quota information from New API, One API, and compatible third-party gateways.",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
@@ -22,14 +22,14 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.2/third-party-balance_0.1.2_linux_amd64.zip",
-            "sha256": "c62dba42318d02a52cfabaa08affe6d02e073155165278c3e34df0568852efe8"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.3/third-party-balance_0.1.3_linux_amd64.zip",
+            "sha256": "b390ebbb5ada1beda654291f0557324b8bdac15a8f6341da7b584684443d285a"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.2/third-party-balance_0.1.2_linux_arm64.zip",
-            "sha256": "c06990996705d741e5ad342bb431513eb9e7241bf90f008a4164a7c41478e032"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.1.3/third-party-balance_0.1.3_linux_arm64.zip",
+            "sha256": "ceaaeb76d40015bf02c156f290008eb6c2ccc6bfdfb518e5f0493b691d704992"
           }
         ]
       }
