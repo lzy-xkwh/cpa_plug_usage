@@ -141,6 +141,67 @@ plugins:
 如果同时有 `used_path`，插件会按 `balance / (balance + used)` 推导总额度。
 如果有 `limit_path`，则使用 `balance / limit`。
 
+## 站点适配示例
+
+凭据默认会按 `Authorization: Bearer <API Key>` 发送（CPA storage_json 中的
+`access_token`/`api_key` 等字段自动查找），因此以下示例无需额外配置请求头。
+示例中的 `https://站点域名` 请替换为你实际使用的站点地址。
+
+### New API 程序站点
+
+```yaml
+plugins:
+  configs:
+    third-party-balance:
+      enabled: true
+      priority: 10
+      endpoint: "https://站点域名/api/usage/token/"
+      method: GET
+      balance_path: data.total_available
+      limit_path: data.total_granted
+      used_path: data.total_used
+      plan_path: data.name
+      window_name: 余额
+```
+
+说明：
+
+- `GET /api/usage/token/` 是 New API 较新版本提供的“令牌用量”只读接口，
+  使用站点的 `sk-` 令牌认证，末尾的 `/` 建议保留（避免 301 重定向）。
+- 返回值 `data.total_available` 是**剩余额度**，`data.total_granted` 是总额度，
+  `data.total_used` 是已用额度；数值为站点额度原始单位（通常 `500000 = 1 美元`）。
+- `plan_path` 指向令牌名称，会作为套餐名展示，可按需删除。
+- 若站点版本较老、该接口返回 404，可退回 OpenAI 兼容账单接口
+  `https://站点域名/v1/dashboard/billing/subscription`（`balance_path: hard_limit_usd`）。
+  注意该接口返回的是"总额度（剩余 + 已用）"而不是剩余余额，仅供参考。
+
+### sub2api 程序站点
+
+```yaml
+plugins:
+  configs:
+    third-party-balance:
+      enabled: true
+      priority: 10
+      endpoint: "https://站点域名/v1/usage"
+      method: GET
+      balance_path: remaining
+      limit_path: quota.limit
+      used_path: quota.used
+      currency_path: unit
+      plan_path: planName
+      window_name: 余额
+```
+
+说明：
+
+- `GET /v1/usage` 是 sub2api 的密钥用量接口，使用站点的 `sk-` 密钥认证。
+- "钱包余额"模式的密钥返回 `remaining`（剩余美元）与 `balance`；设置了总额度的
+  密钥会额外返回 `quota.limit` / `quota.used` / `quota.remaining`，字段缺失时
+  插件会自动跳过对应可选路径。
+- 纯订阅模式（无钱包、无总额度）的密钥响应中没有 `remaining`，此时无法读取
+  余额，属于站点侧限制。
+
 ## 认证与安全
 
 - API Key/Token 从 CPA 传入的 `storage_json` 读取，不写入日志，也不会放进

@@ -225,7 +225,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		response.len = 0
 	}
 	if method == nil {
-		writeResponse(response, errorEnvelope("invalid_method", "method is required"))
+		writeResponse(response, errorEnvelope("invalid_method", "缺少 method 参数"))
 		return 1
 	}
 	var requestBytes []byte
@@ -256,7 +256,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "plugin.register", "plugin.reconfigure":
 		var lifecycle lifecycleRequest
 		if err := json.Unmarshal(request, &lifecycle); err != nil {
-			return nil, fmt.Errorf("decode lifecycle request: %w", err)
+			return nil, fmt.Errorf("解析生命周期请求失败: %w", err)
 		}
 		if err := applyConfig(lifecycle.ConfigYAML); err != nil {
 			return nil, err
@@ -273,7 +273,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "quota.fetch":
 		var req quotaFetchRequest
 		if err := json.Unmarshal(request, &req); err != nil {
-			return nil, fmt.Errorf("decode quota request: %w", err)
+			return nil, fmt.Errorf("解析余额请求失败: %w", err)
 		}
 		resp, err := fetchQuota(req)
 		if err != nil {
@@ -283,10 +283,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "quota.reset":
 		return okEnvelope(map[string]any{
 			"success": false,
-			"message": "third-party-balance is read-only",
+			"message": "第三方余额插件为只读，不支持重置",
 		}), nil
 	default:
-		return errorEnvelope("unknown_method", "unknown method: "+method), nil
+		return errorEnvelope("unknown_method", "未知方法: "+method), nil
 	}
 }
 
@@ -295,25 +295,25 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.1.0",
+			Version:          "0.1.3",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
-				{Name: "enabled", Type: "boolean", Description: "Enable third-party balance reads."},
-				{Name: "priority", Type: "integer", Description: "Provider priority used by CPA when selecting a quota provider."},
-				{Name: "endpoint", Type: "string", Description: "Third-party balance endpoint. Supports {base_url}, {provider}, and {auth_id} placeholders."},
-				{Name: "method", Type: "enum", Description: "HTTP method used for the balance request.", EnumValues: []string{"GET", "POST"}},
-				{Name: "credential_paths", Type: "string", Description: "Comma-separated JSON paths in CPA storage_json used to find an access token or API key."},
-				{Name: "credential_header", Type: "string", Description: "Request header receiving the credential, for example Authorization or Cookie."},
-				{Name: "credential_prefix", Type: "string", Description: "Text prepended to the credential, for example Bearer or an empty string."},
-				{Name: "balance_path", Type: "string", Description: "JSON path containing the current balance."},
-				{Name: "limit_path", Type: "string", Description: "Optional JSON path containing the balance limit."},
-				{Name: "used_path", Type: "string", Description: "Optional JSON path containing used amount."},
-				{Name: "currency_path", Type: "string", Description: "Optional JSON path containing the currency code."},
-				{Name: "plan_path", Type: "string", Description: "Optional JSON path containing the subscription plan."},
-				{Name: "reset_path", Type: "string", Description: "Optional JSON path containing the reset time."},
-				{Name: "window_name", Type: "string", Description: "Label shown for the normalized quota window."},
-				{Name: "allow_insecure_http", Type: "boolean", Description: "Allow HTTP endpoints; keep disabled unless the service is trusted and local."},
+				{Name: "enabled", Type: "boolean", Description: "是否启用第三方余额读取。"},
+				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
+				{Name: "endpoint", Type: "string", Description: "第三方余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符。"},
+				{Name: "method", Type: "enum", Description: "余额请求使用的 HTTP 方法。", EnumValues: []string{"GET", "POST"}},
+				{Name: "credential_paths", Type: "string", Description: "在 CPA storage_json 中查找令牌/API Key 的 JSON 路径，多个用英文逗号分隔。"},
+				{Name: "credential_header", Type: "string", Description: "承载凭据的请求头，例如 Authorization 或 Cookie。"},
+				{Name: "credential_prefix", Type: "string", Description: "凭据前的前缀文本，例如 Bearer；留空时默认为 Bearer 。"},
+				{Name: "balance_path", Type: "string", Description: "响应 JSON 中当前余额所在路径。"},
+				{Name: "limit_path", Type: "string", Description: "可选，响应 JSON 中总额度所在路径。"},
+				{Name: "used_path", Type: "string", Description: "可选，响应 JSON 中已用额度所在路径。"},
+				{Name: "currency_path", Type: "string", Description: "可选，响应 JSON 中币种代码所在路径。"},
+				{Name: "plan_path", Type: "string", Description: "可选，响应 JSON 中套餐名称所在路径。"},
+				{Name: "reset_path", Type: "string", Description: "可选，响应 JSON 中重置时间所在路径。"},
+				{Name: "window_name", Type: "string", Description: "标准化额度窗口的显示名称。"},
+				{Name: "allow_insecure_http", Type: "boolean", Description: "是否允许 HTTP 接口；仅在服务可信且本地内网时开启。"},
 			},
 		},
 		Capabilities: map[string]bool{"quota_provider": true},
@@ -324,7 +324,7 @@ func applyConfig(raw []byte) error {
 	var next config
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := decodeConfig(raw, &next); err != nil {
-			return fmt.Errorf("decode plugin config: %w", err)
+			return fmt.Errorf("解析插件配置失败: %w", err)
 		}
 	}
 	if next.Method == "" {
@@ -347,7 +347,7 @@ func applyConfig(raw []byte) error {
 		next.WindowName = "balance"
 	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
-		return fmt.Errorf("method must be GET or POST, got %q", next.Method)
+		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
 	}
 	if next.Endpoint != "" {
 		if _, err := validateEndpoint(next.Endpoint, next.AllowInsecureHTTP); err != nil {
@@ -394,7 +394,7 @@ func decodeConfig(raw []byte, out *config) error {
 		}
 		key, value, ok := strings.Cut(content, ":")
 		if !ok {
-			return fmt.Errorf("line %d: expected key: value", lineNumber)
+			return fmt.Errorf("第 %d 行: 应为 key: value 格式", lineNumber)
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(stripComment(value))
@@ -405,7 +405,7 @@ func decodeConfig(raw []byte, out *config) error {
 				continue
 			}
 			if err := setConfigScalar(out, key, parseScalar(value)); err != nil {
-				return fmt.Errorf("line %d: %w", lineNumber, err)
+				return fmt.Errorf("第 %d 行: %w", lineNumber, err)
 			}
 			continue
 		}
@@ -415,7 +415,7 @@ func decodeConfig(raw []byte, out *config) error {
 			continue
 		}
 		if value == "" {
-			return fmt.Errorf("line %d: nested value is empty", lineNumber)
+			return fmt.Errorf("第 %d 行: 嵌套值不能为空", lineNumber)
 		}
 		if section == "headers" {
 			if out.Headers == nil {
@@ -437,13 +437,13 @@ func setConfigScalar(out *config, key, value string) error {
 	case "enabled":
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
-			return fmt.Errorf("enabled must be boolean")
+			return fmt.Errorf("enabled 必须是布尔值")
 		}
 		out.Enabled = parsed
 	case "priority":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("priority must be integer")
+			return fmt.Errorf("priority 必须是整数")
 		}
 		out.Priority = parsed
 	case "endpoint":
@@ -459,13 +459,13 @@ func setConfigScalar(out *config, key, value string) error {
 	case "allow_insecure_http":
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
-			return fmt.Errorf("allow_insecure_http must be boolean")
+			return fmt.Errorf("allow_insecure_http 必须是布尔值")
 		}
 		out.AllowInsecureHTTP = parsed
 	case "timeout_seconds":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("timeout_seconds must be integer")
+			return fmt.Errorf("timeout_seconds 必须是整数")
 		}
 		out.TimeoutSeconds = parsed
 	case "balance_path":
@@ -483,7 +483,7 @@ func setConfigScalar(out *config, key, value string) error {
 	case "window_name":
 		out.WindowName = value
 	default:
-		return fmt.Errorf("unsupported config key %q", key)
+		return fmt.Errorf("不支持的配置项 %q", key)
 	}
 	return nil
 }
@@ -537,13 +537,13 @@ func currentConfig() config {
 func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	cfg := currentConfig()
 	if !cfg.Enabled {
-		return quotaFetchResponse{}, errors.New("plugin is disabled; set enabled: true")
+		return quotaFetchResponse{}, errors.New("插件未启用，请在配置中设置 enabled: true")
 	}
 	if cfg.Endpoint == "" {
-		return quotaFetchResponse{}, errors.New("endpoint is not configured")
+		return quotaFetchResponse{}, errors.New("未配置 endpoint（余额接口地址）")
 	}
 	if cfg.BalancePath == "" {
-		return quotaFetchResponse{}, errors.New("balance_path is not configured")
+		return quotaFetchResponse{}, errors.New("未配置 balance_path（余额字段路径）")
 	}
 	endpoint := expandEndpoint(cfg.Endpoint, req)
 	if _, err := validateEndpoint(endpoint, cfg.AllowInsecureHTTP); err != nil {
@@ -560,7 +560,7 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	if len(cfg.Query) > 0 {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			return quotaFetchResponse{}, fmt.Errorf("parse endpoint: %w", err)
+			return quotaFetchResponse{}, fmt.Errorf("解析 endpoint 失败: %w", err)
 		}
 		query := parsed.Query()
 		for name, value := range cfg.Query {
@@ -579,11 +579,11 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 		return quotaFetchResponse{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return quotaFetchResponse{}, fmt.Errorf("balance endpoint returned HTTP %d", response.StatusCode)
+		return quotaFetchResponse{}, fmt.Errorf("余额接口返回 HTTP %d", response.StatusCode)
 	}
 	var document any
 	if err := json.Unmarshal(response.Body, &document); err != nil {
-		return quotaFetchResponse{}, fmt.Errorf("balance endpoint returned invalid JSON: %w", err)
+		return quotaFetchResponse{}, fmt.Errorf("余额接口返回的不是有效 JSON: %w", err)
 	}
 	return normalizeQuota(document, cfg)
 }
@@ -591,7 +591,7 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 func normalizeQuota(document any, cfg config) (quotaFetchResponse, error) {
 	balance, ok := numberAt(document, cfg.BalancePath)
 	if !ok {
-		return quotaFetchResponse{}, fmt.Errorf("balance_path %q did not resolve to a number", cfg.BalancePath)
+		return quotaFetchResponse{}, fmt.Errorf("balance_path %q 未解析到数字", cfg.BalancePath)
 	}
 	used, hasUsed := numberAt(document, cfg.UsedPath)
 	limit, hasLimit := numberAt(document, cfg.LimitPath)
@@ -640,7 +640,7 @@ func normalizeQuota(document any, cfg config) (quotaFetchResponse, error) {
 func callHostHTTP(request httpRequest) (httpResponse, error) {
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return httpResponse{}, fmt.Errorf("encode host HTTP request: %w", err)
+		return httpResponse{}, fmt.Errorf("编码宿主 HTTP 请求失败: %w", err)
 	}
 	cMethod := C.CString("host.http.do")
 	defer C.free(unsafe.Pointer(cMethod))
@@ -651,26 +651,26 @@ func callHostHTTP(request httpRequest) (httpResponse, error) {
 		defer C.free(unsafe.Pointer(requestPtr))
 	}
 	if C.call_host_api(cMethod, requestPtr, C.size_t(len(payload)), &response) != 0 {
-		return httpResponse{}, errors.New("host HTTP bridge failed")
+		return httpResponse{}, errors.New("宿主 HTTP 桥接调用失败")
 	}
 	if response.ptr == nil || response.len == 0 {
-		return httpResponse{}, errors.New("host HTTP bridge returned an empty response")
+		return httpResponse{}, errors.New("宿主 HTTP 桥接返回空响应")
 	}
 	raw := C.GoBytes(response.ptr, C.int(response.len))
 	C.free_host_buffer(response.ptr, response.len)
 	var envelope hostEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return httpResponse{}, fmt.Errorf("decode host HTTP response: %w", err)
+		return httpResponse{}, fmt.Errorf("解码宿主 HTTP 响应失败: %w", err)
 	}
 	if !envelope.OK {
 		if envelope.Error != nil {
-			return httpResponse{}, fmt.Errorf("host HTTP request failed: %s", envelope.Error.Message)
+			return httpResponse{}, fmt.Errorf("宿主 HTTP 请求失败: %s", envelope.Error.Message)
 		}
-		return httpResponse{}, errors.New("host HTTP request failed")
+		return httpResponse{}, errors.New("宿主 HTTP 请求失败")
 	}
 	var result httpResponse
 	if err := json.Unmarshal(envelope.Result, &result); err != nil {
-		return httpResponse{}, fmt.Errorf("decode host HTTP result: %w", err)
+		return httpResponse{}, fmt.Errorf("解码宿主 HTTP 结果失败: %w", err)
 	}
 	return result, nil
 }
@@ -781,10 +781,10 @@ func expandTemplate(value string, req quotaFetchRequest) string {
 func validateEndpoint(endpoint string, allowInsecure bool) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("endpoint must be an absolute URL")
+		return nil, fmt.Errorf("endpoint 必须是完整的绝对 URL")
 	}
 	if parsed.Scheme != "https" && !(allowInsecure && parsed.Scheme == "http") {
-		return nil, errors.New("endpoint must use https unless allow_insecure_http is true")
+		return nil, errors.New("endpoint 必须使用 https，除非 allow_insecure_http 为 true")
 	}
 	return parsed, nil
 }
