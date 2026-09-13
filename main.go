@@ -346,23 +346,13 @@ func applyConfig(raw []byte) error {
 	if next.WindowName == "" {
 		next.WindowName = "balance"
 	}
-	if !next.Enabled {
-		configMu.Lock()
-		runtimeConfig = next
-		configMu.Unlock()
-		return nil
-	}
-	if next.Endpoint == "" {
-		return errors.New("endpoint is required")
-	}
-	if next.BalancePath == "" {
-		return errors.New("balance_path is required")
-	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method must be GET or POST, got %q", next.Method)
 	}
-	if _, err := validateEndpoint(next.Endpoint, next.AllowInsecureHTTP); err != nil {
-		return err
+	if next.Endpoint != "" {
+		if _, err := validateEndpoint(next.Endpoint, next.AllowInsecureHTTP); err != nil {
+			return err
+		}
 	}
 	configMu.Lock()
 	runtimeConfig = next
@@ -418,7 +408,9 @@ func decodeConfig(raw []byte, out *config) error {
 			continue
 		}
 		if section != "headers" && section != "query" {
-			return fmt.Errorf("line %d: unsupported nested key %q", lineNumber, key)
+			// CPA adds host-managed sections such as `store` after a
+			// store installation. They are not plugin settings.
+			continue
 		}
 		if value == "" {
 			return fmt.Errorf("line %d: nested value is empty", lineNumber)
@@ -544,6 +536,12 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	cfg := currentConfig()
 	if !cfg.Enabled {
 		return quotaFetchResponse{}, errors.New("plugin is disabled; set enabled: true")
+	}
+	if cfg.Endpoint == "" {
+		return quotaFetchResponse{}, errors.New("endpoint is not configured")
+	}
+	if cfg.BalancePath == "" {
+		return quotaFetchResponse{}, errors.New("balance_path is not configured")
 	}
 	endpoint := expandEndpoint(cfg.Endpoint, req)
 	if _, err := validateEndpoint(endpoint, cfg.AllowInsecureHTTP); err != nil {

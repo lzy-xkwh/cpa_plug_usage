@@ -39,6 +39,18 @@ func TestDisabledConfigDoesNotRequireEndpoint(t *testing.T) {
 	}
 }
 
+func TestStoreMetadataIsIgnored(t *testing.T) {
+	if err := applyConfig([]byte(`
+enabled: true
+priority: 10
+store:
+  source: source-example
+  version: 0.1.0
+`)); err != nil {
+		t.Fatalf("applyConfig() should ignore CPA store metadata: %v", err)
+	}
+}
+
 func TestDecodeConfigVisualCredentialPaths(t *testing.T) {
 	var got config
 	err := decodeConfig([]byte(`

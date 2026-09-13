@@ -42,6 +42,10 @@ access_token, api_key, token
 如果你的 CPA 版本没有插件配置表单，则仍可使用下面的 YAML 方式，或升级到
 包含插件配置管理接口的版本。
 
+安装后，CPA 会自动在插件配置中加入 `store` 元数据。该元数据由 CPA 管理，
+插件会自动忽略它；首次安装时可以先安装插件，再进入插件配置填写
+`endpoint` 和 `balance_path`。
+
 ## 从 CPA 插件商店安装
 
 本仓库包含可直接用于 CPA 自定义插件商店的 `registry.json`。在 CPA 的
