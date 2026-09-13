@@ -46,6 +46,9 @@ priority: 10
 store:
   source: source-example
   version: 0.1.0
+  artifacts:
+    - linux-amd64.zip
+    - linux-arm64.zip
 `)); err != nil {
 		t.Fatalf("applyConfig() should ignore CPA store metadata: %v", err)
 	}

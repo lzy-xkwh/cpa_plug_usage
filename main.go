@@ -385,7 +385,9 @@ func decodeConfig(raw []byte, out *config) error {
 		content := strings.TrimSpace(line)
 		if strings.HasPrefix(content, "- ") {
 			if section != "credential_paths" {
-				return fmt.Errorf("line %d: list is only supported for credential_paths", lineNumber)
+				// CPA may pass store metadata containing lists such as
+				// artifact URLs. Unknown host-managed sections are ignored.
+				continue
 			}
 			out.CredentialPaths = append(out.CredentialPaths, parseScalar(strings.TrimSpace(strings.TrimPrefix(content, "- "))))
 			continue
