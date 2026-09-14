@@ -363,3 +363,51 @@ func TestAutoDetectMissingBaseURLGuidance(t *testing.T) {
 		t.Fatalf("autoDetectProfile() error = %v, want guidance mentioning profiles", err)
 	}
 }
+
+func TestUnknownConfigKeyIgnored(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nfuture_option: 1\n")); err != nil {
+		t.Fatalf("applyConfig() with unknown key should be ignored, got %v", err)
+	}
+	if !currentConfig().Enabled {
+		t.Fatalf("enabled should still be parsed")
+	}
+}
+
+func TestManagementRegisterAndHandle(t *testing.T) {
+	raw, err := handleMethod("management.register", nil)
+	if err != nil {
+		t.Fatalf("management.register error = %v", err)
+	}
+	if !strings.Contains(string(raw), "config-wizard") || !strings.Contains(string(raw), "余额配置向导") {
+		t.Fatalf("register response missing wizard route: %s", raw)
+	}
+	raw, err = handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard"}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	var env struct {
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.OK {
+		t.Fatalf("handle envelope = %s (%v)", raw, err)
+	}
+	var resp struct {
+		StatusCode int                 `json:"StatusCode"`
+		Headers    map[string][]string `json:"Headers"`
+		Body       []byte              `json:"Body"`
+	}
+	if err := json.Unmarshal(env.Result, &resp); err != nil {
+		t.Fatalf("decode response = %v", err)
+	}
+	if resp.StatusCode != 200 || !strings.Contains(string(resp.Body), "余额配置向导") {
+		t.Fatalf("wizard response status=%d body len=%d", resp.StatusCode, len(resp.Body))
+	}
+	raw, err = handleMethod("management.handle", []byte(`{"method":"POST"}`))
+	if err != nil {
+		t.Fatalf("management.handle POST error = %v", err)
+	}
+	if !strings.Contains(string(raw), "405") {
+		t.Fatalf("POST should return 405, got %s", raw)
+	}
+}

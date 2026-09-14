@@ -365,6 +365,16 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			"success": false,
 			"message": "余额查询插件为只读，不支持重置",
 		}), nil
+	case "management.register":
+		return okEnvelope(map[string]any{
+			"resources": []map[string]any{{
+				"path":        "/config-wizard",
+				"menu":        "余额配置向导",
+				"description": "可视化生成并保存 api-balance 余额插件配置，无需手写 YAML",
+			}},
+		}), nil
+	case "management.handle":
+		return handleManagementRPC(request)
 	default:
 		return errorEnvelope("unknown_method", "未知方法: "+method), nil
 	}
@@ -375,7 +385,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.5.0",
+			Version:          "0.6.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -401,7 +411,7 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "profiles", Type: "string", Description: "高级：多厂商档案映射，键为 CPA 凭据的 provider 名，值为一组余额配置；详见 README。仅 YAML 配置可用。"},
 			},
 		},
-		Capabilities: map[string]bool{"quota_provider": true},
+		Capabilities: map[string]bool{"quota_provider": true, "management_api": true},
 	}
 }
 
@@ -724,7 +734,12 @@ func setConfigScalar(out *config, key, value string) error {
 	case "window_name":
 		out.WindowName = value
 	default:
-		return fmt.Errorf("不支持的配置项 %q", key)
+		// 未知配置项不再致命：旧版本插件加载含新键的配置时忽略并写宿主日志，
+		// 避免 reconfigure 失败导致插件被宿主摘除。
+		hostLog("warn", fmt.Sprintf(
+			"api-balance: 忽略未知配置项 %q（可能是当前插件版本不支持的新选项；如需使用请升级插件）",
+			key))
+		return nil
 	}
 	return nil
 }
@@ -1043,12 +1058,9 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 	return resp, nil
 }
 
-func callHostHTTP(request httpRequest) (httpResponse, error) {
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return httpResponse{}, fmt.Errorf("编码宿主 HTTP 请求失败: %w", err)
-	}
-	cMethod := C.CString("host.http.do")
+// callHostMethod 调用宿主回调 RPC（host.http.do / host.log 等）并解包结果。
+func callHostMethod(hostMethod string, payload []byte) ([]byte, error) {
+	cMethod := C.CString(hostMethod)
 	defer C.free(unsafe.Pointer(cMethod))
 	var response C.cliproxy_buffer
 	var requestPtr *C.uint8_t
@@ -1057,25 +1069,46 @@ func callHostHTTP(request httpRequest) (httpResponse, error) {
 		defer C.free(unsafe.Pointer(requestPtr))
 	}
 	if C.call_host_api(cMethod, requestPtr, C.size_t(len(payload)), &response) != 0 {
-		return httpResponse{}, errors.New("宿主 HTTP 桥接调用失败")
+		return nil, errors.New("宿主回调调用失败")
 	}
 	if response.ptr == nil || response.len == 0 {
-		return httpResponse{}, errors.New("宿主 HTTP 桥接返回空响应")
+		return nil, errors.New("宿主回调返回空响应")
 	}
 	raw := C.GoBytes(response.ptr, C.int(response.len))
 	C.free_host_buffer(response.ptr, response.len)
 	var envelope hostEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return httpResponse{}, fmt.Errorf("解码宿主 HTTP 响应失败: %w", err)
+		return nil, fmt.Errorf("解码宿主回调响应失败: %w", err)
 	}
 	if !envelope.OK {
 		if envelope.Error != nil {
-			return httpResponse{}, fmt.Errorf("宿主 HTTP 请求失败: %s", envelope.Error.Message)
+			return nil, fmt.Errorf("宿主回调请求失败: %s", envelope.Error.Message)
 		}
-		return httpResponse{}, errors.New("宿主 HTTP 请求失败")
+		return nil, errors.New("宿主回调请求失败")
+	}
+	return envelope.Result, nil
+}
+
+// hostLog 尽力向宿主日志写一条插件日志，失败时静默。
+func hostLog(level, message string) {
+	payload, err := json.Marshal(map[string]any{"level": level, "message": message})
+	if err != nil {
+		return
+	}
+	_, _ = callHostMethod("host.log", payload)
+}
+
+func callHostHTTP(request httpRequest) (httpResponse, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return httpResponse{}, fmt.Errorf("编码宿主 HTTP 请求失败: %w", err)
+	}
+	raw, err := callHostMethod("host.http.do", payload)
+	if err != nil {
+		return httpResponse{}, err
 	}
 	var result httpResponse
-	if err := json.Unmarshal(envelope.Result, &result); err != nil {
+	if err := json.Unmarshal(raw, &result); err != nil {
 		return httpResponse{}, fmt.Errorf("解码宿主 HTTP 结果失败: %w", err)
 	}
 	return result, nil
@@ -1226,3 +1259,285 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	response.ptr = ptr
 	response.len = C.size_t(len(raw))
 }
+
+// ---------- 管理后台：配置向导 ----------
+
+type managementRPCRequest struct {
+	Method string              `json:"method"`
+	Path   string              `json:"path"`
+	Query  map[string][]string `json:"query"`
+	Body   []byte              `json:"body"`
+}
+
+// handleManagementRPC 处理宿主转发的插件管理/资源请求。
+// 向导页注册在 /v0/resource/plugins/api-balance/config-wizard（浏览器可直接打开，
+// 管理后台会显示「余额配置向导」菜单项）。
+func handleManagementRPC(request []byte) ([]byte, error) {
+	var req managementRPCRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, fmt.Errorf("解析管理请求失败: %w", err)
+	}
+	switch req.Method {
+	case http.MethodGet, "":
+		return okEnvelope(map[string]any{
+			"StatusCode": 200,
+			"Headers":    map[string][]string{"Content-Type": {"text/html; charset=utf-8"}},
+			"Body":       []byte(configWizardPage()),
+		}), nil
+	default:
+		return okEnvelope(map[string]any{
+			"StatusCode": 405,
+			"Headers":    map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}},
+			"Body":       []byte("本向导仅支持 GET 请求"),
+		}), nil
+	}
+}
+
+func configWizardPage() string {
+	return wizardHTML
+}
+
+const wizardHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>api-balance 余额配置向导</title>
+<style>
+:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb}
+*{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+body{margin:0;background:var(--bg);color:var(--tx)}
+.wrap{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mu);font-size:13px;margin-bottom:20px}
+.card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 10px}
+label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
+input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
+.row{display:flex;gap:10px}.row>div{flex:1}
+.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px}
+.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
+.profile{border:1px dashed var(--bd);border-radius:8px;padding:12px;margin-bottom:10px;position:relative}
+.profile .del{position:absolute;top:8px;right:8px;color:#dc2626;border:none;background:none;cursor:pointer;font-size:12px}
+details{margin-top:8px}summary{font-size:12px;color:var(--ac);cursor:pointer}
+textarea{width:100%;min-height:190px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
+.tip{font-size:12px;color:var(--mu);margin-top:6px}
+.ok{color:#16a34a}.err{color:#dc2626}
+</style>
+</head>
+<body><div class="wrap">
+<h1>API 余额查询 · 配置向导</h1>
+<div class="sub">选厂商 → 填地址 → 生成配置。生成后可一键保存，失败时可复制 YAML 手动粘贴到「管理后台 → 插件 → api-balance → 配置」。</div>
+
+<div class="card">
+<h2>① 通用设置</h2>
+<div class="row">
+  <div><label>插件开关</label><select id="enabled"><option value="true" selected>启用</option><option value="false">停用</option></select></div>
+  <div><label>优先级（数字越大越靠前）</label><input id="priority" type="number" value="10"></div>
+</div>
+</div>
+
+<div class="card">
+<h2>② 厂商档案 <span style="font-weight:400;color:var(--mu);font-size:12px">（一个档案对应一个凭据来源，多个厂商就加多行）</span></h2>
+<div id="profiles"></div>
+<button class="btn" onclick="addProfile()">＋ 添加厂商档案</button>
+</div>
+
+<div class="card">
+<h2>③ 生成并保存</h2>
+<div class="row" style="align-items:flex-end">
+  <div style="flex:2"><label>CPA 管理密钥（可选，填了才能在本页直接读取/保存配置）</label>
+  <input id="mgmtkey" type="password" placeholder="留空则只生成 YAML，手动粘贴保存"></div>
+  <div><button class="btn" onclick="loadCurrent()">读取现有配置</button></div>
+</div>
+<div style="margin-top:10px">
+  <button class="btn primary" onclick="saveConfig()">保存到 CPA</button>
+  <button class="btn" onclick="copyYAML()">复制 YAML</button>
+  <span id="msg" style="font-size:12px;margin-left:8px"></span>
+</div>
+<label>生成的配置（YAML）</label>
+<textarea id="out" readonly></textarea>
+<div class="tip">保存失败时：复制上面内容 → 管理后台 → 插件 → api-balance → 编辑配置 → 粘贴并保存。</div>
+</div>
+
+<script>
+var PRESETS = {
+  "deepseek":   {label:"DeepSeek 官方", base:"https://api.deepseek.com", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
+  "moonshot":   {label:"Moonshot Kimi 官方", base:"https://api.moonshot.cn", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
+  "openrouter": {label:"OpenRouter", base:"https://openrouter.ai", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
+  "one-api":    {label:"one-api 系中转站", base:"", ep:"", lim:"hard_limit_usd", usedEp:"", used:"total_usage", scale:"0.01"},
+  "new-api":    {label:"New API 站点", base:"", ep:"", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
+  "sub2api":    {label:"sub2api 站点", base:"", ep:"", bal:"remaining", cur:"unit", plan:"planName"},
+  "custom":     {label:"自定义（全部手填）", base:"", ep:"", bal:"", cur:"", lim:"", used:""}
+};
+var seq = 0;
+function addProfile(name, vendor){
+  seq++;
+  var d = document.createElement("div");
+  d.className = "profile"; d.id = "p" + seq;
+  var v = vendor || "custom";
+  d.innerHTML =
+    '<button class="del" onclick="delProfile(\'' + d.id + '\')">删除</button>' +
+    '<div class="row">' +
+      '<div><label>档案名 = CPA 凭据的 provider 名（小写字母/数字/横线）</label><input class="f-name" value="' + (name || ("my-" + PRESETS[v].label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""))) + '"></div>' +
+      '<div><label>厂商</label><select class="f-vendor" onchange="applyPreset(\'' + d.id + '\')"></select></div>' +
+    '</div>' +
+    '<div class="row">' +
+      '<div><label>站点地址 base_url（探测与占位符展开用）</label><input class="f-base" placeholder="https://站点域名"></div>' +
+      '<div><label>余额接口 endpoint（留空=自动识别）</label><input class="f-ep" placeholder="留空自动识别"></div>' +
+    '</div>' +
+    '<details><summary>高级：JSON 路径 / 用量端点（厂商预设已填好默认值）</summary>' +
+      '<div class="row">' +
+        '<div><label>balance_path（余额）</label><input class="f-bal"></div>' +
+        '<div><label>currency_path（币种）</label><input class="f-cur"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div><label>limit_path（总额度，用于推导余额）</label><input class="f-lim"></div>' +
+        '<div><label>used_path（已用量）</label><input class="f-used"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div><label>used_endpoint（用量查询端点，可选）</label><input class="f-usep"></div>' +
+        '<div><label>used_scale（已用量换算倍率）</label><input class="f-scale" value="1"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<div><label>plan_path（套餐名，可选）</label><input class="f-plan"></div>' +
+        '<div><label>window_name（显示名称）</label><input class="f-win" value="余额"></div>' +
+      '</div>' +
+    '</details>';
+  var sel = d.querySelector(".f-vendor");
+  for (var k in PRESETS) {
+    var o = document.createElement("option");
+    o.value = k; o.textContent = PRESETS[k].label;
+    if (k === v) o.selected = true;
+    sel.appendChild(o);
+  }
+  document.getElementById("profiles").appendChild(d);
+  applyPreset(d.id);
+}
+function delProfile(id){ var el = document.getElementById(id); if (el) el.remove(); }
+function applyPreset(id){
+  var d = document.getElementById(id);
+  var p = PRESETS[d.querySelector(".f-vendor").value] || {};
+  d.querySelector(".f-ep").value = p.ep || "";
+  d.querySelector(".f-bal").value = p.bal || "";
+  d.querySelector(".f-cur").value = p.cur || "";
+  d.querySelector(".f-lim").value = p.lim || "";
+  d.querySelector(".f-used").value = p.used || "";
+  d.querySelector(".f-usep").value = p.usedEp || "";
+  d.querySelector(".f-scale").value = p.scale || "1";
+  d.querySelector(".f-plan").value = p.plan || "";
+  d.querySelector(".f-win").value = p.win || "余额";
+  if (p.base) d.querySelector(".f-base").value = p.base;
+}
+function val(id, cls){ var el = document.getElementById(id); var f = el.querySelector(cls); return f ? f.value.trim() : ""; }
+function collectConfig(){
+  var cfg = { enabled: document.getElementById("enabled").value === "true" };
+  var pri = parseInt(document.getElementById("priority").value, 10);
+  if (!isNaN(pri)) cfg.priority = pri;
+  var boxes = document.getElementById("profiles").querySelectorAll(".profile");
+  var profs = {}, count = 0;
+  boxes.forEach(function(box){
+    var id = box.id;
+    var name = val(id, ".f-name").toLowerCase();
+    if (!name) name = "profile-" + (count + 1);
+    count++;
+    var v = box.querySelector(".f-vendor").value;
+    var p = {};
+    if (v && v !== "custom") p.vendor = v;
+    ["base:.f-base|base_url","ep:.f-ep|endpoint","bal:.f-bal|balance_path","cur:.f-cur|currency_path","lim:.f-lim|limit_path","used:.f-used|used_path","usep:.f-usep|used_endpoint","plan:.f-plan|plan_path","win:.f-win|window_name"].forEach(function(m){
+      var parts = m.split("|"); var v2 = val(id, parts[0].split(":")[1]);
+      if (v2) p[parts[1]] = v2;
+    });
+    var sc = parseFloat(val(id, ".f-scale"));
+    if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
+    profs[name] = p;
+  });
+  if (count === 1) {
+    var only = profs[Object.keys(profs)[0]];
+    for (var k in only) cfg[k] = only[k];
+  } else if (count > 1) {
+    cfg.profiles = profs;
+  }
+  return cfg;
+}
+function toYAML(obj, indent){
+  var pad = indent || "";
+  var lines = [];
+  for (var k in obj) {
+    var v = obj[k];
+    if (v === null || v === undefined) continue;
+    if (typeof v === "object") {
+      lines.push(pad + k + ":");
+      lines.push(toYAML(v, pad + "  "));
+    } else if (typeof v === "boolean" || typeof v === "number") {
+      lines.push(pad + k + ": " + v);
+    } else {
+      var s = String(v);
+      if (/[:#\[\]{}&*!|>'"%@]/.test(s) || s === "" || /^[\s]|[\s]$/.test(s)) s = '"' + s.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
+      lines.push(pad + k + ": " + s);
+    }
+  }
+  return lines.join("\\n");
+}
+function refreshOutput(){ document.getElementById("out").value = toYAML(collectConfig()); }
+function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
+function authHeaders(){
+  var k = document.getElementById("mgmtkey").value.trim();
+  var h = {"Content-Type":"application/json"};
+  if (k) h["Authorization"] = "Bearer " + k;
+  return h;
+}
+function loadCurrent(){
+  fetch("/v0/management/plugins/api-balance/config", {headers: authHeaders()})
+    .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function(cfg){ applyServerConfig(cfg); msg("已读取现有配置", "ok"); })
+    .catch(function(e){ msg("读取失败：" + e.message + "（可填写管理密钥后重试，或直接生成新配置）", "err"); });
+}
+function applyServerConfig(cfg){
+  if (!cfg || typeof cfg !== "object") return;
+  document.getElementById("enabled").value = cfg.enabled === false ? "false" : "true";
+  document.getElementById("profiles").innerHTML = "";
+  seq = 0;
+  var keys = cfg.profiles && typeof cfg.profiles === "object" ? Object.keys(cfg.profiles) : [];
+  if (keys.length === 0) {
+    var legacy = {};
+    for (var k in cfg) if (k !== "enabled" && k !== "priority" && k !== "headers" && k !== "query" && k !== "credential_paths") legacy[k] = cfg[k];
+    keys = Object.keys(legacy).length > 0 ? ["__top__"] : [];
+  }
+  keys.forEach(function(k){
+    var p = k === "__top__" ? legacy : (cfg.profiles[k] || {});
+    addProfile(k === "__top__" ? "default" : k, p.vendor || "custom");
+    var box = document.getElementById("p" + seq);
+    if (p.base_url) box.querySelector(".f-base").value = p.base_url;
+    if (p.endpoint) box.querySelector(".f-ep").value = p.endpoint;
+    if (p.balance_path) box.querySelector(".f-bal").value = p.balance_path;
+    if (p.currency_path) box.querySelector(".f-cur").value = p.currency_path;
+    if (p.limit_path) box.querySelector(".f-lim").value = p.limit_path;
+    if (p.used_path) box.querySelector(".f-used").value = p.used_path;
+    if (p.used_endpoint) box.querySelector(".f-usep").value = p.used_endpoint;
+    if (p.used_scale !== undefined) box.querySelector(".f-scale").value = p.used_scale;
+    if (p.plan_path) box.querySelector(".f-plan").value = p.plan_path;
+    if (p.window_name) box.querySelector(".f-win").value = p.window_name;
+  });
+  if (keys.length === 0) addProfile();
+  refreshOutput();
+}
+function saveConfig(){
+  var cfg = collectConfig();
+  refreshOutput();
+  fetch("/v0/management/plugins/api-balance/config", {method:"PUT", headers: authHeaders(), body: JSON.stringify(cfg)})
+    .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error("HTTP " + r.status + " " + t.slice(0,120)); }); msg("已保存！CPA 会自动热加载新配置。", "ok"); })
+    .catch(function(e){ msg("自动保存失败：" + e.message + "。请点「复制 YAML」手动粘贴到插件配置里保存。", "err"); });
+}
+function copyYAML(){
+  var t = document.getElementById("out");
+  t.select();
+  try { document.execCommand("copy"); msg("已复制，去插件配置里粘贴保存即可", "ok"); }
+  catch (e) { msg("复制失败，请手动选择文本复制", "err"); }
+}
+document.getElementById("profiles").addEventListener("input", refreshOutput);
+document.getElementById("profiles").addEventListener("change", refreshOutput);
+addProfile();
+refreshOutput();
+</script>
+</div></body></html>`
