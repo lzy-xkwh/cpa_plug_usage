@@ -8,6 +8,6 @@ case "$(uname -s)" in
 esac
 
 go mod tidy
-go build -buildmode=c-shared -o "third-party-balance.${ext}" .
-rm -f third-party-balance.h
-echo "built third-party-balance.${ext}"
+go build -buildmode=c-shared -o "api-balance.${ext}" .
+rm -f api-balance.h
+echo "built api-balance.${ext}"

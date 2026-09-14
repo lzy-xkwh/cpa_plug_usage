@@ -1,3 +1,3 @@
-module third-party-balance-plugin
+module api-balance-plugin
 
 go 1.24

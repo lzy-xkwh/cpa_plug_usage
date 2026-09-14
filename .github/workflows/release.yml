@@ -42,21 +42,21 @@ jobs:
           fi
           if [ -n "$cc" ]; then
             CC="$cc" CGO_ENABLED=1 GOOS=linux GOARCH="$GOARCH" \
-              go build -trimpath -buildmode=c-shared -o third-party-balance.so .
+              go build -trimpath -buildmode=c-shared -o api-balance.so .
           else
             CGO_ENABLED=1 GOOS=linux GOARCH="$GOARCH" \
-              go build -trimpath -buildmode=c-shared -o third-party-balance.so .
+              go build -trimpath -buildmode=c-shared -o api-balance.so .
           fi
-          rm -f third-party-balance.h
-          archive="third-party-balance_${version}_linux_${GOARCH}.zip"
-          zip "$archive" third-party-balance.so
+          rm -f api-balance.h
+          archive="api-balance_${version}_linux_${GOARCH}.zip"
+          zip "$archive" api-balance.so
           sha256sum "$archive" > "sha256-${GOARCH}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.goarch }}
           path: |
-            third-party-balance_*.zip
+            api-balance_*.zip
             sha256-*.txt
 
   publish:

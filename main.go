@@ -72,8 +72,8 @@ import (
 const (
 	abiVersion    = 1
 	schemaVersion = 1
-	pluginID      = "third-party-balance"
-	providerID    = "third-party-balance"
+	pluginID      = "api-balance"
+	providerID    = "api-balance"
 )
 
 type envelope struct {
@@ -88,6 +88,7 @@ type envelope struct {
 type config struct {
 	Enabled           bool              `yaml:"enabled"`
 	Priority          int               `yaml:"priority"`
+	Vendor            string            `yaml:"vendor"`
 	Endpoint          string            `yaml:"endpoint"`
 	Method            string            `yaml:"method"`
 	Headers           map[string]string `yaml:"headers"`
@@ -105,6 +106,34 @@ type config struct {
 	ResetPath         string            `yaml:"reset_path"`
 	WindowName        string            `yaml:"window_name"`
 }
+
+// vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
+// 预设只填补未显式配置的字段，用户配置始终优先。
+type vendorPreset struct {
+	Endpoint     string
+	BalancePath  string
+	UsedPath     string
+	LimitPath    string
+	CurrencyPath string
+	PlanPath     string
+	WindowName   string
+}
+
+var vendorPresets = map[string]vendorPreset{
+	"deepseek": {
+		Endpoint:     "https://api.deepseek.com/user/balance",
+		BalancePath:  "balance_infos.0.total_balance",
+		CurrencyPath: "balance_infos.0.currency",
+		WindowName:   "余额",
+	},
+	"moonshot": {
+		Endpoint:   "https://api.moonshot.cn/v1/users/me/balance",
+		BalancePath: "data.available_balance",
+		WindowName: "余额",
+	},
+}
+
+var vendorNames = []string{"custom", "deepseek", "moonshot"}
 
 type quotaFetchRequest struct {
 	AuthIndex   string            `json:"auth_index"`
@@ -266,8 +295,8 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]string{"identifier": providerID}), nil
 	case "quota.describe":
 		return okEnvelope(quotaDescribeResponse{
-			SupportedProviders: []string{providerID},
-			DisplayName:        "第三方余额读取",
+			SupportedProviders: []string{providerID, "deepseek", "moonshot", "third-party-balance"},
+			DisplayName:        "API 余额查询",
 			SupportsReset:      false,
 		}), nil
 	case "quota.fetch":
@@ -283,7 +312,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "quota.reset":
 		return okEnvelope(map[string]any{
 			"success": false,
-			"message": "第三方余额插件为只读，不支持重置",
+			"message": "余额查询插件为只读，不支持重置",
 		}), nil
 	default:
 		return errorEnvelope("unknown_method", "未知方法: "+method), nil
@@ -295,13 +324,14 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.1.3",
+			Version:          "0.2.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
-				{Name: "enabled", Type: "boolean", Description: "是否启用第三方余额读取。"},
+				{Name: "enabled", Type: "boolean", Description: "是否启用余额查询。"},
 				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
-				{Name: "endpoint", Type: "string", Description: "第三方余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符。"},
+				{Name: "vendor", Type: "enum", Description: "内置厂商预设，自动填充接口地址与余额路径；显式配置的字段优先。custom 表示完全自定义。", EnumValues: vendorNames},
+				{Name: "endpoint", Type: "string", Description: "余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符；vendor 预设已含官方地址，仅自定义时填写。"},
 				{Name: "method", Type: "enum", Description: "余额请求使用的 HTTP 方法。", EnumValues: []string{"GET", "POST"}},
 				{Name: "credential_paths", Type: "string", Description: "在 CPA storage_json 中查找令牌/API Key 的 JSON 路径，多个用英文逗号分隔。"},
 				{Name: "credential_header", Type: "string", Description: "承载凭据的请求头，例如 Authorization 或 Cookie。"},
@@ -325,6 +355,37 @@ func applyConfig(raw []byte) error {
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := decodeConfig(raw, &next); err != nil {
 			return fmt.Errorf("解析插件配置失败: %w", err)
+		}
+	}
+	vendor := strings.ToLower(strings.TrimSpace(next.Vendor))
+	if vendor == "" {
+		vendor = "custom"
+	}
+	if vendor != "custom" {
+		preset, ok := vendorPresets[vendor]
+		if !ok {
+			return fmt.Errorf("不支持的 vendor %q，可选值: %s", next.Vendor, strings.Join(vendorNames, ", "))
+		}
+		if next.Endpoint == "" {
+			next.Endpoint = preset.Endpoint
+		}
+		if next.BalancePath == "" {
+			next.BalancePath = preset.BalancePath
+		}
+		if next.UsedPath == "" {
+			next.UsedPath = preset.UsedPath
+		}
+		if next.LimitPath == "" {
+			next.LimitPath = preset.LimitPath
+		}
+		if next.CurrencyPath == "" {
+			next.CurrencyPath = preset.CurrencyPath
+		}
+		if next.PlanPath == "" {
+			next.PlanPath = preset.PlanPath
+		}
+		if next.WindowName == "" {
+			next.WindowName = preset.WindowName
 		}
 	}
 	if next.Method == "" {
@@ -448,6 +509,8 @@ func setConfigScalar(out *config, key, value string) error {
 		out.Priority = parsed
 	case "endpoint":
 		out.Endpoint = value
+	case "vendor":
+		out.Vendor = value
 	case "method":
 		out.Method = value
 	case "credential_paths":
@@ -629,7 +692,7 @@ func normalizeQuota(document any, cfg config) (quotaFetchResponse, error) {
 		Description:       description,
 	}
 	resp := quotaFetchResponse{
-		Groups: []quotaGroup{{DisplayName: "第三方余额", Buckets: []quotaBucket{bucket}}},
+		Groups: []quotaGroup{{DisplayName: "余额", Buckets: []quotaBucket{bucket}}},
 	}
 	if plan != "" {
 		resp.Subscription = &quotaSubscription{Plan: plan}

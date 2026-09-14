@@ -54,6 +54,41 @@ store:
 	}
 }
 
+func TestVendorPresetFillsMissingFields(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nvendor: deepseek\n")); err != nil {
+		t.Fatalf("applyConfig() error for deepseek preset = %v", err)
+	}
+	got := currentConfig()
+	if got.Endpoint != "https://api.deepseek.com/user/balance" {
+		t.Fatalf("endpoint = %q, want deepseek balance endpoint", got.Endpoint)
+	}
+	if got.BalancePath != "balance_infos.0.total_balance" || got.CurrencyPath != "balance_infos.0.currency" {
+		t.Fatalf("paths = %q / %q", got.BalancePath, got.CurrencyPath)
+	}
+	if got.WindowName != "余额" {
+		t.Fatalf("window name = %q", got.WindowName)
+	}
+}
+
+func TestVendorExplicitConfigWins(t *testing.T) {
+	if err := applyConfig([]byte("vendor: moonshot\nbalance_path: data.cash_balance\n")); err != nil {
+		t.Fatalf("applyConfig() error for moonshot preset = %v", err)
+	}
+	got := currentConfig()
+	if got.Endpoint != "https://api.moonshot.cn/v1/users/me/balance" {
+		t.Fatalf("endpoint = %q, want moonshot balance endpoint", got.Endpoint)
+	}
+	if got.BalancePath != "data.cash_balance" {
+		t.Fatalf("balance path = %q, want explicit override kept", got.BalancePath)
+	}
+}
+
+func TestUnknownVendorRejected(t *testing.T) {
+	if err := applyConfig([]byte("vendor: no-such-vendor\n")); err == nil {
+		t.Fatalf("applyConfig() should reject unknown vendor")
+	}
+}
+
 func TestDecodeConfigVisualCredentialPaths(t *testing.T) {
 	var got config
 	err := decodeConfig([]byte(`

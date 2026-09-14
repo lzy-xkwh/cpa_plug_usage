@@ -1,10 +1,20 @@
-# CPA 第三方余额插件
+# CPA API 余额查询插件（api-balance）
 
 这是一个 CLIProxyAPI（CPA）标准动态库插件，实现 `QuotaProvider` 能力。
-它通过 CPA 宿主的 `host.http.do` 桥接访问第三方余额接口，避免插件自行创建
+它通过 CPA 宿主的 `host.http.do` 桥接访问余额接口，避免插件自行创建
 网络客户端，并把响应转换为 CPA 的标准额度窗口。
 
-插件是**只读**的：不会充值、签到、改密钥或重置第三方账户。
+支持两类余额来源：
+
+- **官方厂商**：内置 `deepseek`（DeepSeek）、`moonshot`（Kimi/Moonshot）
+  预设，配置一行 `vendor` 即可读取官方账户余额；
+- **中转站 / 自建网关**：New API、sub2api 等兼容站点，通过自定义
+  `endpoint` + 响应 JSON 路径适配，不需要重新编译插件。
+
+> Z.AI（智谱）目前没有公开的余额查询 API，暂无法内置预设；
+> 待官方提供接口后可按同样的方式加入 `vendorPresets`。
+
+插件是**只读**的：不会充值、签到、改密钥或重置任何账户。
 
 ## 构建
 
@@ -12,23 +22,28 @@
 
 ```bash
 go mod tidy
-go build -buildmode=c-shared -o third-party-balance.so .
-rm -f third-party-balance.h
+go build -buildmode=c-shared -o api-balance.so .
+rm -f api-balance.h
 ```
 
 将生成的 `.so` 放入 CPA 的插件目录。macOS 使用 `.dylib`，Windows 使用
-`.dll`。插件 ID 来自文件名 `third-party-balance`。
+`.dll`。插件 ID 来自文件名 `api-balance`。
+
+> 从旧版 `third-party-balance` 升级：插件 ID 已变更，商店不会自动覆盖
+> 升级，请先卸载旧插件再安装 `api-balance`。
 
 ## 可视化配置（推荐）
 
 较新的 CPA 管理界面会读取插件注册时返回的 `ConfigFields`，因此安装插件后
-可以在 **管理后台 → Plugins/插件 → third-party-balance → Config/配置** 中直接
+可以在 **管理后台 → Plugins/插件 → api-balance → Config/配置** 中直接
 填写表单并保存，不需要手动编辑 YAML。
 
 可视化表单包含：
 
-- 启用开关、优先级、GET/POST 请求方式；
-- 第三方余额接口地址；
+- 启用开关、优先级；
+- 厂商预设 `vendor`（custom / deepseek / moonshot），选择后自动填充
+  官方接口地址与余额路径；
+- 余额接口地址、GET/POST 请求方式（自定义站点时使用）；
 - Token/API Key 的 JSON 字段路径、认证请求头和前缀；
 - 余额、总额度、已用额度、币种、套餐、重置时间等响应 JSON 路径；
 - 额度窗口名称和是否允许 HTTP。
@@ -43,8 +58,7 @@ access_token, api_key, token
 包含插件配置管理接口的版本。
 
 安装后，CPA 会自动在插件配置中加入 `store` 元数据。该元数据由 CPA 管理，
-插件会自动忽略它；首次安装时可以先安装插件，再进入插件配置填写
-`endpoint` 和 `balance_path`。
+插件会自动忽略它。
 
 ## 从 CPA 插件商店安装
 
@@ -89,24 +103,62 @@ docker compose up -d
 令牌不会写入插件清单、插件状态或日志。CPA 官方示例也将商店认证值从环境
 变量读取，并支持分别覆盖 registry 和 artifact 请求。
 
-重启 CPA 后，在插件商店刷新并安装 `third-party-balance`。后续发布新的
+重启 CPA 后，在插件商店刷新并安装 `api-balance`。后续发布新的
 GitHub Release 后，插件商店可以直接更新，不需要再次手动复制动态库。
 
 当前发布工作流提供 Linux `amd64` 和 `arm64` 两种 Docker 常用架构；其他
 平台可以按 `.github/workflows/release.yml` 扩展。
 
-## CPA 配置（高级/自动部署）
+## 官方厂商预设
 
-CPA 配置文件示例：
+凭据默认会按 `Authorization: Bearer <API Key>` 发送（CPA storage_json 中的
+`access_token`/`api_key` 等字段自动查找），因此以下示例无需额外配置请求头。
+预设只填补未显式配置的字段，显式配置始终优先。
+
+### DeepSeek
+
+```yaml
+plugins:
+  configs:
+    api-balance:
+      enabled: true
+      priority: 10
+      vendor: deepseek
+```
+
+等价于自动填充：`endpoint: https://api.deepseek.com/user/balance`、
+`balance_path: balance_infos.0.total_balance`、
+`currency_path: balance_infos.0.currency`。余额为人民币。
+
+### Kimi / Moonshot
+
+```yaml
+plugins:
+  configs:
+    api-balance:
+      enabled: true
+      priority: 10
+      vendor: moonshot
+```
+
+等价于自动填充：`endpoint: https://api.moonshot.cn/v1/users/me/balance`、
+`balance_path: data.available_balance`。余额为人民币（含代金券）。
+国际站（platform.kimi.ai）Key 与国内站不通用，如需查询国际站余额，可
+显式覆盖 `endpoint: https://api.moonshot.ai/v1/users/me/balance`。
+
+## CPA 配置（高级/自定义站点）
+
+自定义中转站或任何返回 JSON 的余额接口，使用 `vendor: custom`（默认）：
 
 ```yaml
 plugins:
   enabled: true
   dir: "plugins"
   configs:
-    third-party-balance:
+    api-balance:
       enabled: true
       priority: 10
+      vendor: custom
 
       # 支持 {base_url}、{provider}、{auth_id}、{auth_index}
       endpoint: "https://api.example.com/v1/account/balance"
@@ -126,7 +178,7 @@ plugins:
       credential_header: Authorization
       credential_prefix: "Bearer "
 
-      # 第三方 JSON 响应中的点路径
+      # 响应 JSON 中的点路径
       balance_path: data.balance
       limit_path: data.limit
       used_path: data.used
@@ -141,7 +193,7 @@ plugins:
 如果同时有 `used_path`，插件会按 `balance / (balance + used)` 推导总额度。
 如果有 `limit_path`，则使用 `balance / limit`。
 
-## 站点适配示例
+## 中转站适配示例
 
 凭据默认会按 `Authorization: Bearer <API Key>` 发送（CPA storage_json 中的
 `access_token`/`api_key` 等字段自动查找），因此以下示例无需额外配置请求头。
@@ -152,7 +204,7 @@ plugins:
 ```yaml
 plugins:
   configs:
-    third-party-balance:
+    api-balance:
       enabled: true
       priority: 10
       endpoint: "https://站点域名/api/usage/token/"
@@ -180,7 +232,7 @@ plugins:
 ```yaml
 plugins:
   configs:
-    third-party-balance:
+    api-balance:
       enabled: true
       priority: 10
       endpoint: "https://站点域名/v1/usage"
@@ -214,14 +266,15 @@ plugins:
 ## 适配 All API Hub / New API 类站点
 
 All API Hub 的核心思路是保存站点地址和凭据，再按站点类型读取余额。这个插件
-把“站点差异”下沉到配置：不同第三方站点只需要调整 `endpoint`、凭据路径和
-响应 JSON 路径，不需要重新编译插件。若站点需要 Cookie，可把
-`credential_header` 改为 `Cookie`、`credential_prefix` 改为空字符串，并让
-`credential_paths` 指向保存 Cookie 的字段。
+把“站点差异”下沉到配置：不同站点既可以选择内置厂商预设，也可以调整
+`endpoint`、凭据路径和响应 JSON 路径，不需要重新编译插件。若站点需要
+Cookie，可把 `credential_header` 改为 `Cookie`、`credential_prefix` 改为
+空字符串，并让 `credential_paths` 指向保存 Cookie 的字段。
 
 ## CPA 查询入口
 
-启用后，CPA 会把插件注册为 `third-party-balance` quota provider。可通过 CPA
+启用后，CPA 会把插件注册为 `api-balance` quota provider（同时声明支持
+`deepseek`、`moonshot` 凭据与自定义 `api-balance` 凭据）。可通过 CPA
 管理 API 的 quota 查询入口读取：
 
 ```text
