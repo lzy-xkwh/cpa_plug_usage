@@ -411,3 +411,45 @@ func TestManagementRegisterAndHandle(t *testing.T) {
 		t.Fatalf("POST should return 405, got %s", raw)
 	}
 }
+
+func TestManagementKeyScalarAccepted(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: sk-test-123\nmanagement_url: http://127.0.0.1:9999\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	got := currentConfig()
+	if got.ManagementKey != "sk-test-123" || got.ManagementURL != "http://127.0.0.1:9999" {
+		t.Fatalf("management fields = %q / %q", got.ManagementKey, got.ManagementURL)
+	}
+}
+
+func TestConfigDataSanitizesManagementKey(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: secret-do-not-leak\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-data"}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	if strings.Contains(string(raw), "secret-do-not-leak") {
+		t.Fatalf("config-data leaked management_key: %s", raw)
+	}
+	var env struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			ManagementConfigured bool `json:"management_configured"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.OK || !env.Result.ManagementConfigured {
+		t.Fatalf("config-data envelope = %s (%v)", raw, err)
+	}
+}
+
+func TestSaveRequiresManagementKey(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	result := saveConfigViaManagementAPI(`{"enabled":true}`)
+	if result["ok"] != false {
+		t.Fatalf("save without management_key should fail, got %v", result)
+	}
+}

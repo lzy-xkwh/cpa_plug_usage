@@ -102,13 +102,17 @@ type config struct {
 	CredentialPrefix  string            `yaml:"credential_prefix"`
 	AllowInsecureHTTP bool              `yaml:"allow_insecure_http"`
 	TimeoutSeconds    int               `yaml:"timeout_seconds"`
-	BalancePath       string            `yaml:"balance_path"`
-	UsedPath          string            `yaml:"used_path"`
-	LimitPath         string            `yaml:"limit_path"`
-	CurrencyPath      string            `yaml:"currency_path"`
-	PlanPath          string            `yaml:"plan_path"`
-	ResetPath         string            `yaml:"reset_path"`
-	WindowName        string            `yaml:"window_name"`
+	// ManagementKey / ManagementURL 供配置向导在服务端调用 CPA 管理 API：
+	// 自动列出已配置供应商、保存配置。仅保存在插件配置里，不回传给页面。
+	ManagementKey string `yaml:"management_key"`
+	ManagementURL string `yaml:"management_url"`
+	BalancePath   string `yaml:"balance_path"`
+	UsedPath      string `yaml:"used_path"`
+	LimitPath     string `yaml:"limit_path"`
+	CurrencyPath  string `yaml:"currency_path"`
+	PlanPath      string `yaml:"plan_path"`
+	ResetPath     string `yaml:"reset_path"`
+	WindowName    string `yaml:"window_name"`
 	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
 	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
 	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
@@ -370,7 +374,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			"resources": []map[string]any{{
 				"path":        "/config-wizard",
 				"menu":        "余额配置向导",
-				"description": "可视化生成并保存 api-balance 余额插件配置，无需手写 YAML",
+				"description": "自动列出已配置供应商并生成/保存余额配置，无需手写 YAML",
 			}},
 		}), nil
 	case "management.handle":
@@ -385,7 +389,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.6.0",
+			Version:          "0.7.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -707,6 +711,10 @@ func setConfigScalar(out *config, key, value string) error {
 		out.CredentialHeader = value
 	case "credential_prefix":
 		out.CredentialPrefix = value
+	case "management_key":
+		out.ManagementKey = strings.TrimSpace(value)
+	case "management_url":
+		out.ManagementURL = strings.TrimSpace(value)
 	case "allow_insecure_http":
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
@@ -1269,13 +1277,28 @@ type managementRPCRequest struct {
 	Body   []byte              `json:"body"`
 }
 
-// handleManagementRPC 处理宿主转发的插件管理/资源请求。
-// 向导页注册在 /v0/resource/plugins/api-balance/config-wizard（浏览器可直接打开，
-// 管理后台会显示「余额配置向导」菜单项）。
+func firstQuery(query map[string][]string, key string) string {
+	if values, ok := query[key]; ok && len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+// handleManagementRPC 处理宿主转发的插件管理/资源请求：
+//
+//	GET /v0/resource/plugins/api-balance/config-wizard           向导页面
+//	GET /v0/resource/plugins/api-balance/config-wizard?save=JSON 保存配置（服务端直调管理 API）
+//	GET /v0/resource/plugins/api-balance/config-data             当前配置 + 供应商支持状态
 func handleManagementRPC(request []byte) ([]byte, error) {
 	var req managementRPCRequest
 	if err := json.Unmarshal(request, &req); err != nil {
 		return nil, fmt.Errorf("解析管理请求失败: %w", err)
+	}
+	if saveJSON := firstQuery(req.Query, "save"); saveJSON != "" {
+		return okEnvelope(saveConfigViaManagementAPI(saveJSON)), nil
+	}
+	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/config-data") {
+		return okEnvelope(configDataResponse()), nil
 	}
 	switch req.Method {
 	case http.MethodGet, "":
@@ -1297,6 +1320,245 @@ func configWizardPage() string {
 	return wizardHTML
 }
 
+// knownNoBalanceProviders 官方侧没有公开余额接口的内置供应商，
+// 在向导里明确标注“无法查询”，避免用户白配置。
+var knownNoBalanceProviders = map[string]string{
+	"openai":      "OpenAI 官方未提供可查询余额的公开接口",
+	"claude":      "Claude 官方未提供可查询余额的公开接口",
+	"claude-code": "Claude 官方未提供可查询余额的公开接口",
+	"anthropic":   "Anthropic 官方未提供可查询余额的公开接口",
+	"codex":       "OpenAI 官方未提供可查询余额的公开接口",
+	"gemini":      "Gemini 官方未提供可查询余额的公开接口",
+	"gemini-cli":  "Gemini 官方未提供可查询余额的公开接口",
+	"qwen":        "Qwen 官方未提供可查询余额的公开接口",
+	"qwen-code":   "Qwen 官方未提供可查询余额的公开接口",
+}
+
+type providerStatus struct {
+	Provider string `json:"provider"`
+	Label    string `json:"label,omitempty"`
+	Status   string `json:"status"` // ok | unsupported | configurable
+	Note     string `json:"note,omitempty"`
+}
+
+// configDataResponse 返回向导页所需的全部数据：当前配置（脱敏）与
+// 已配置供应商的余额支持状态。management_key 只在服务端使用，不下发。
+func configDataResponse() map[string]any {
+	cfg := currentConfig()
+	resp := map[string]any{
+		"management_configured": cfg.ManagementKey != "",
+		"management_url":        managementBaseURL(cfg),
+		"config":                sanitizedPageConfig(cfg),
+	}
+	if cfg.ManagementKey == "" {
+		resp["providers"] = []providerStatus{}
+		resp["providers_note"] = "尚未保存 CPA 管理密钥：在下方粘贴一次即可自动列出所有已配置供应商（仅保存在插件配置中，不会下发到页面）。"
+		return resp
+	}
+	providers, note := discoverProviders(cfg)
+	resp["providers"] = providers
+	if note != "" {
+		resp["providers_note"] = note
+	}
+	return resp
+}
+
+// sanitizedPageConfig 把当前配置裁剪成页面可用的形态（不含密钥与请求头）。
+func sanitizedPageConfig(cfg config) map[string]any {
+	out := map[string]any{
+		"enabled":  cfg.Enabled,
+		"priority": cfg.Priority,
+		"profiles": map[string]any{},
+	}
+	profiles := map[string]any{}
+	for name, p := range cfg.Profiles {
+		profiles[name] = profileToPage(p)
+	}
+	out["profiles"] = profiles
+	if len(cfg.Profiles) == 0 && (cfg.Vendor != "" || cfg.Endpoint != "" || cfg.BaseURL != "" || cfg.BalancePath != "" || cfg.LimitPath != "") {
+		out["__top__"] = profileToPage(cfg)
+	}
+	return out
+}
+
+func profileToPage(p config) map[string]any {
+	m := map[string]any{}
+	set := func(key, value string) {
+		if value != "" {
+			m[key] = value
+		}
+	}
+	set("vendor", p.Vendor)
+	set("base_url", p.BaseURL)
+	set("endpoint", p.Endpoint)
+	set("used_endpoint", p.UsedEndpoint)
+	set("balance_path", p.BalancePath)
+	set("used_path", p.UsedPath)
+	set("limit_path", p.LimitPath)
+	set("currency_path", p.CurrencyPath)
+	set("plan_path", p.PlanPath)
+	set("window_name", p.WindowName)
+	if p.UsedScale != 0 && p.UsedScale != 1 {
+		m["used_scale"] = p.UsedScale
+	}
+	return m
+}
+
+func managementBaseURL(cfg config) string {
+	if cfg.ManagementURL != "" {
+		return strings.TrimRight(cfg.ManagementURL, "/")
+	}
+	return "http://127.0.0.1:8317"
+}
+
+// discoverProviders 通过 CPA 管理 API 列出已配置供应商并标注余额支持状态。
+func discoverProviders(cfg config) ([]providerStatus, string) {
+	baseURL := managementBaseURL(cfg)
+	request := httpRequest{
+		Method: http.MethodGet,
+		URL:    baseURL + "/v0/management/auth-files",
+		Headers: map[string][]string{
+			"Authorization": {"Bearer " + cfg.ManagementKey},
+			"Accept":        {"application/json"},
+		},
+	}
+	response, err := callHostHTTP(request)
+	if err != nil {
+		return []providerStatus{}, fmt.Sprintf(
+			"无法通过 CPA 管理 API 列出供应商（%v）。请确认插件配置 management_url 指向 CPA 服务地址（默认 http://127.0.0.1:8317）且 management_key 有效", err)
+	}
+	if response.StatusCode != 200 {
+		return []providerStatus{}, fmt.Sprintf(
+			"CPA 管理 API 返回 HTTP %d：无法列出供应商。请检查 management_key 是否为有效的管理密钥", response.StatusCode)
+	}
+	var payload struct {
+		Files []struct {
+			Provider      string `json:"provider"`
+			Label         string `json:"label"`
+			Name          string `json:"name"`
+			Disabled      bool   `json:"disabled"`
+			SupportsQuota bool   `json:"supports_quota"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return []providerStatus{}, "解析供应商列表失败: " + err.Error()
+	}
+	type aggregate struct {
+		label     string
+		total     int
+		active    int
+		supported bool
+	}
+	order := []string{}
+	byProvider := map[string]*aggregate{}
+	for _, file := range payload.Files {
+		provider := strings.ToLower(strings.TrimSpace(file.Provider))
+		if provider == "" {
+			continue
+		}
+		entry, ok := byProvider[provider]
+		if !ok {
+			entry = &aggregate{}
+			byProvider[provider] = entry
+			order = append(order, provider)
+		}
+		entry.total++
+		if !file.Disabled {
+			entry.active++
+		}
+		if file.SupportsQuota {
+			entry.supported = true
+		}
+		if entry.label == "" {
+			entry.label = strings.TrimSpace(file.Label)
+			if entry.label == "" {
+				entry.label = strings.TrimSpace(file.Name)
+			}
+		}
+	}
+	result := make([]providerStatus, 0, len(order))
+	for _, provider := range order {
+		entry := byProvider[provider]
+		status := providerStatus{Provider: provider, Label: entry.label}
+		switch {
+		case entry.supported:
+			status.Status = "ok"
+			status.Note = "余额已在供应商页签显示，无需任何配置"
+		case knownNoBalanceProviders[provider] != "":
+			status.Status = "unsupported"
+			status.Note = knownNoBalanceProviders[provider]
+		default:
+			status.Status = "configurable"
+			if entry.active == 0 {
+				status.Note = "全部凭据已停用；勾选后可选择厂商配置余额查询"
+			} else {
+				status.Note = "尚未配置余额查询：勾选后选择厂商类型即可"
+			}
+		}
+		result = append(result, status)
+	}
+	return result, ""
+}
+
+// saveConfigViaManagementAPI 接收向导页提交的配置（JSON），白名单过滤后
+// 通过 CPA 管理 API PUT /plugins/api-balance/config 保存并触发热加载。
+func saveConfigViaManagementAPI(saveJSON string) map[string]any {
+	cfg := currentConfig()
+	if cfg.ManagementKey == "" {
+		return map[string]any{
+			"ok":      false,
+			"message": "请先在向导中粘贴一次 CPA 管理密钥并保存（会写入插件配置 management_key，之后不再询问）",
+		}
+	}
+	var incoming map[string]any
+	if err := json.Unmarshal([]byte(saveJSON), &incoming); err != nil {
+		return map[string]any{"ok": false, "message": "配置数据解析失败: " + err.Error()}
+	}
+	clean := map[string]any{}
+	for key, value := range incoming {
+		switch key {
+		case "enabled", "priority", "profiles":
+			clean[key] = value
+		case "management_key", "headers", "query", "credential_paths":
+			return map[string]any{"ok": false, "message": "出于安全考虑，向导不允许提交 " + key + "，请在插件配置 YAML 中手动维护"}
+		default:
+			// 顶层其余标量字段同样接受（vendor/endpoint/路径等）。
+			clean[key] = value
+		}
+	}
+	if profiles, ok := clean["profiles"].(map[string]any); ok {
+		fixed := map[string]any{}
+		for name, value := range profiles {
+			fixed[strings.ToLower(strings.TrimSpace(name))] = value
+		}
+		clean["profiles"] = fixed
+	}
+	payload, err := json.Marshal(clean)
+	if err != nil {
+		return map[string]any{"ok": false, "message": "配置编码失败: " + err.Error()}
+	}
+	request := httpRequest{
+		Method: http.MethodPut,
+		URL:    managementBaseURL(cfg) + "/v0/management/plugins/api-balance/config",
+		Headers: map[string][]string{
+			"Authorization": {"Bearer " + cfg.ManagementKey},
+			"Content-Type":  {"application/json"},
+		},
+		Body: payload,
+	}
+	response, err := callHostHTTP(request)
+	if err != nil {
+		return map[string]any{"ok": false, "message": "调用 CPA 管理 API 失败: " + err.Error()}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return map[string]any{
+			"ok":      false,
+			"message": fmt.Sprintf("保存失败（HTTP %d）：%s", response.StatusCode, strings.TrimSpace(string(response.Body))),
+		}
+	}
+	return map[string]any{"ok": true, "message": "已保存！CPA 正在热加载新配置。"}
+}
+
 const wizardHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1304,161 +1566,219 @@ const wizardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>api-balance 余额配置向导</title>
 <style>
-:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb}
+:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706}
 *{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
 body{margin:0;background:var(--bg);color:var(--tx)}
-.wrap{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+.wrap{max-width:820px;margin:0 auto;padding:24px 16px 64px}
 h1{font-size:20px;margin:0 0 4px}
 .sub{color:var(--mu);font-size:13px;margin-bottom:20px}
 .card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
 .card h2{font-size:15px;margin:0 0 10px}
 label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
 input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
-.row{display:flex;gap:10px}.row>div{flex:1}
+.row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px}
 .btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
-.profile{border:1px dashed var(--bd);border-radius:8px;padding:12px;margin-bottom:10px;position:relative}
-.profile .del{position:absolute;top:8px;right:8px;color:#dc2626;border:none;background:none;cursor:pointer;font-size:12px}
-details{margin-top:8px}summary{font-size:12px;color:var(--ac);cursor:pointer}
-textarea{width:100%;min-height:190px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mu);font-weight:500;font-size:12px}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
+.tag.ok{background:#dcfce7;color:var(--ok)}
+.tag.no{background:#fee2e2;color:var(--err)}
+.tag.todo{background:#fef3c7;color:var(--warn)}
+.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
+details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
+textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
-.ok{color:#16a34a}.err{color:#dc2626}
+#msg{font-size:12px;margin-left:8px}
+.ok{color:var(--ok)}.err{color:var(--err)}
 </style>
 </head>
 <body><div class="wrap">
 <h1>API 余额查询 · 配置向导</h1>
-<div class="sub">选厂商 → 填地址 → 生成配置。生成后可一键保存，失败时可复制 YAML 手动粘贴到「管理后台 → 插件 → api-balance → 配置」。</div>
+<div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 
-<div class="card">
-<h2>① 通用设置</h2>
-<div class="row">
-  <div><label>插件开关</label><select id="enabled"><option value="true" selected>启用</option><option value="false">停用</option></select></div>
-  <div><label>优先级（数字越大越靠前）</label><input id="priority" type="number" value="10"></div>
+<div class="card" id="setupCard" style="display:none">
+<h2>首次使用：保存 CPA 管理密钥</h2>
+<div class="tip">粘贴一次 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。密钥只保存在本插件的配置里，不会显示在页面上。</div>
+<div class="row" style="margin-top:8px">
+  <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management key）"></div>
+  <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
 </div>
-</div>
-
-<div class="card">
-<h2>② 厂商档案 <span style="font-weight:400;color:var(--mu);font-size:12px">（一个档案对应一个凭据来源，多个厂商就加多行）</span></h2>
-<div id="profiles"></div>
-<button class="btn" onclick="addProfile()">＋ 添加厂商档案</button>
 </div>
 
 <div class="card">
-<h2>③ 生成并保存</h2>
-<div class="row" style="align-items:flex-end">
-  <div style="flex:2"><label>CPA 管理密钥（可选，填了才能在本页直接读取/保存配置）</label>
-  <input id="mgmtkey" type="password" placeholder="留空则只生成 YAML，手动粘贴保存"></div>
-  <div><button class="btn" onclick="loadCurrent()">读取现有配置</button></div>
+<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="loadData()">刷新</button></h2>
+<table><thead><tr><th style="width:26%">供应商</th><th style="width:22%">状态</th><th>说明</th><th style="width:70px">操作</th></tr></thead>
+<tbody id="provRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table>
+<div class="tip" id="provNote"></div>
 </div>
-<div style="margin-top:10px">
-  <button class="btn primary" onclick="saveConfig()">保存到 CPA</button>
-  <button class="btn" onclick="copyYAML()">复制 YAML</button>
-  <span id="msg" style="font-size:12px;margin-left:8px"></span>
+
+<div class="card" id="cfgCard" style="display:none">
+<h2>② 为选中的供应商配置余额查询</h2>
+<div id="forms"></div>
+<div class="row" style="margin-top:10px">
+  <div style="flex:2"><label>可选：为简单站点补一个通用档案（键 default，兜底未匹配凭据）</label>
+  <input id="defaultBase" placeholder="留空 = 不添加"></div>
 </div>
-<label>生成的配置（YAML）</label>
-<textarea id="out" readonly></textarea>
-<div class="tip">保存失败时：复制上面内容 → 管理后台 → 插件 → api-balance → 编辑配置 → 粘贴并保存。</div>
+<div style="margin-top:12px">
+  <button class="btn primary" onclick="saveAll()">保存到 CPA</button>
+  <button class="btn" onclick="showYAML()">仅生成 YAML</button>
+  <span id="msg"></span>
+</div>
+<div id="yamlBox" style="display:none;margin-top:10px">
+  <label>生成的配置（YAML，可复制到插件配置手动保存）</label>
+  <textarea id="out" readonly></textarea>
+</div>
 </div>
 
 <script>
 var PRESETS = {
-  "deepseek":   {label:"DeepSeek 官方", base:"https://api.deepseek.com", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
-  "moonshot":   {label:"Moonshot Kimi 官方", base:"https://api.moonshot.cn", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
-  "openrouter": {label:"OpenRouter", base:"https://openrouter.ai", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
-  "one-api":    {label:"one-api 系中转站", base:"", ep:"", lim:"hard_limit_usd", usedEp:"", used:"total_usage", scale:"0.01"},
-  "new-api":    {label:"New API 站点", base:"", ep:"", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
-  "sub2api":    {label:"sub2api 站点", base:"", ep:"", bal:"remaining", cur:"unit", plan:"planName"},
-  "custom":     {label:"自定义（全部手填）", base:"", ep:"", bal:"", cur:"", lim:"", used:""}
+  "deepseek":   {label:"DeepSeek 官方", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
+  "moonshot":   {label:"Moonshot Kimi 官方", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
+  "openrouter": {label:"OpenRouter", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
+  "one-api":    {label:"one-api 系中转站", lim:"hard_limit_usd", used:"total_usage", scale:"0.01"},
+  "new-api":    {label:"New API 站点", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
+  "sub2api":    {label:"sub2api 站点", bal:"remaining", cur:"unit", plan:"planName"},
+  "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
 };
-var seq = 0;
-function addProfile(name, vendor){
-  seq++;
-  var d = document.createElement("div");
-  d.className = "profile"; d.id = "p" + seq;
-  var v = vendor || "custom";
-  d.innerHTML =
-    '<button class="del" onclick="delProfile(\'' + d.id + '\')">删除</button>' +
-    '<div class="row">' +
-      '<div><label>档案名 = CPA 凭据的 provider 名（小写字母/数字/横线）</label><input class="f-name" value="' + (name || ("my-" + PRESETS[v].label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""))) + '"></div>' +
-      '<div><label>厂商</label><select class="f-vendor" onchange="applyPreset(\'' + d.id + '\')"></select></div>' +
-    '</div>' +
-    '<div class="row">' +
-      '<div><label>站点地址 base_url（探测与占位符展开用）</label><input class="f-base" placeholder="https://站点域名"></div>' +
-      '<div><label>余额接口 endpoint（留空=自动识别）</label><input class="f-ep" placeholder="留空自动识别"></div>' +
-    '</div>' +
-    '<details><summary>高级：JSON 路径 / 用量端点（厂商预设已填好默认值）</summary>' +
-      '<div class="row">' +
-        '<div><label>balance_path（余额）</label><input class="f-bal"></div>' +
-        '<div><label>currency_path（币种）</label><input class="f-cur"></div>' +
-      '</div>' +
-      '<div class="row">' +
-        '<div><label>limit_path（总额度，用于推导余额）</label><input class="f-lim"></div>' +
-        '<div><label>used_path（已用量）</label><input class="f-used"></div>' +
-      '</div>' +
-      '<div class="row">' +
-        '<div><label>used_endpoint（用量查询端点，可选）</label><input class="f-usep"></div>' +
-        '<div><label>used_scale（已用量换算倍率）</label><input class="f-scale" value="1"></div>' +
-      '</div>' +
-      '<div class="row">' +
-        '<div><label>plan_path（套餐名，可选）</label><input class="f-plan"></div>' +
-        '<div><label>window_name（显示名称）</label><input class="f-win" value="余额"></div>' +
-      '</div>' +
-    '</details>';
-  var sel = d.querySelector(".f-vendor");
-  for (var k in PRESETS) {
-    var o = document.createElement("option");
-    o.value = k; o.textContent = PRESETS[k].label;
-    if (k === v) o.selected = true;
-    sel.appendChild(o);
+var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
+var DATA = null;
+var selected = {};
+function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
+function loadData(){
+  fetch("/v0/resource/plugins/api-balance/config-data").then(function(r){ return r.json(); }).then(function(d){
+    DATA = d;
+    document.getElementById("setupCard").style.display = d.management_configured ? "none" : "block";
+    renderProviders(d);
+    renderForms();
+  }).catch(function(e){ msg("加载数据失败：" + e.message, "err"); });
+}
+function renderProviders(d){
+  var rows = document.getElementById("provRows");
+  var list = d.providers || [];
+  if (!list.length) {
+    rows.innerHTML = '<tr><td colspan="4" class="tip">' + esc(d.providers_note || "未发现已配置的供应商。") + '</td></tr>';
+    document.getElementById("provNote").textContent = "";
+    return;
   }
-  document.getElementById("profiles").appendChild(d);
-  applyPreset(d.id);
-}
-function delProfile(id){ var el = document.getElementById(id); if (el) el.remove(); }
-function applyPreset(id){
-  var d = document.getElementById(id);
-  var p = PRESETS[d.querySelector(".f-vendor").value] || {};
-  d.querySelector(".f-ep").value = p.ep || "";
-  d.querySelector(".f-bal").value = p.bal || "";
-  d.querySelector(".f-cur").value = p.cur || "";
-  d.querySelector(".f-lim").value = p.lim || "";
-  d.querySelector(".f-used").value = p.used || "";
-  d.querySelector(".f-usep").value = p.usedEp || "";
-  d.querySelector(".f-scale").value = p.scale || "1";
-  d.querySelector(".f-plan").value = p.plan || "";
-  d.querySelector(".f-win").value = p.win || "余额";
-  if (p.base) d.querySelector(".f-base").value = p.base;
-}
-function val(id, cls){ var el = document.getElementById(id); var f = el.querySelector(cls); return f ? f.value.trim() : ""; }
-function collectConfig(){
-  var cfg = { enabled: document.getElementById("enabled").value === "true" };
-  var pri = parseInt(document.getElementById("priority").value, 10);
-  if (!isNaN(pri)) cfg.priority = pri;
-  var boxes = document.getElementById("profiles").querySelectorAll(".profile");
-  var profs = {}, count = 0;
-  boxes.forEach(function(box){
-    var id = box.id;
-    var name = val(id, ".f-name").toLowerCase();
-    if (!name) name = "profile-" + (count + 1);
-    count++;
-    var v = box.querySelector(".f-vendor").value;
-    var p = {};
-    if (v && v !== "custom") p.vendor = v;
-    ["base:.f-base|base_url","ep:.f-ep|endpoint","bal:.f-bal|balance_path","cur:.f-cur|currency_path","lim:.f-lim|limit_path","used:.f-used|used_path","usep:.f-usep|used_endpoint","plan:.f-plan|plan_path","win:.f-win|window_name"].forEach(function(m){
-      var parts = m.split("|"); var v2 = val(id, parts[0].split(":")[1]);
-      if (v2) p[parts[1]] = v2;
-    });
-    var sc = parseFloat(val(id, ".f-scale"));
-    if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
-    profs[name] = p;
+  var html = "";
+  list.forEach(function(p){
+    var tag, note;
+    if (p.status === "ok") { tag = '<span class="tag ok">已支持</span>'; note = esc(p.note); }
+    else if (p.status === "unsupported") { tag = '<span class="tag no">无法查询</span>'; note = esc(p.note); }
+    else { tag = '<span class="tag todo">可配置</span>'; note = esc(p.note); }
+    var action = "";
+    if (p.status === "configurable") {
+      action = '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(\'' + esc(p.provider) + '\',this.checked)"> 配置</label>';
+    }
+    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '</td><td>' + tag + '</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
   });
-  if (count === 1) {
-    var only = profs[Object.keys(profs)[0]];
+  rows.innerHTML = html;
+  document.getElementById("provNote").textContent = d.providers_note || "";
+}
+function togglePick(provider, on){
+  if (on) selected[provider] = true; else delete selected[provider];
+  renderForms();
+}
+function renderForms(){
+  var box = document.getElementById("forms");
+  var names = Object.keys(selected);
+  if (!names.length) { box.innerHTML = '<div class="tip">在上方勾选「可配置」的供应商后，这里会出现对应表单。已支持的供应商无需任何操作。</div>'; document.getElementById("cfgCard").style.display = "none"; return; }
+  document.getElementById("cfgCard").style.display = "block";
+  var html = "";
+  names.forEach(function(name){
+    html += '<div class="configbox" id="f-' + esc(name) + '">' +
+      '<b>' + esc(name) + '</b> <span class="tip">（对应凭据 provider 名，已自动填好）</span>' +
+      '<div class="row">' +
+        '<div><label>厂商类型（选了会自动带出余额字段路径）</label><select class="f-vendor" onchange="preset(\'' + esc(name) + '\')">' + vendorOptions() + '</select></div>' +
+        '<div><label>站点地址 base_url（可留空，凭据里一般已有）</label><input class="f-base" placeholder="https://站点域名"></div>' +
+      '</div>' +
+      '<details><summary>高级：余额接口与 JSON 路径（厂商预设已填默认值）</summary>' +
+        '<div class="row">' +
+          '<div><label>endpoint（余额接口，留空=自动识别）</label><input class="f-ep"></div>' +
+          '<div><label>used_endpoint（可选）</label><input class="f-usep"></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><label>balance_path</label><input class="f-bal"></div>' +
+          '<div><label>currency_path</label><input class="f-cur"></div>' +
+          '<div><label>plan_path</label><input class="f-plan"></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><label>limit_path</label><input class="f-lim"></div>' +
+          '<div><label>used_path</label><input class="f-used"></div>' +
+          '<div><label>used_scale</label><input class="f-scale" value="1"></div>' +
+        '</div>' +
+      '</details></div>';
+  });
+  box.innerHTML = html;
+  names.forEach(function(name){ preset(name); });
+}
+function vendorOptions(){
+  var h = "";
+  for (var k in PRESETS) h += '<option value="' + k + '">' + PRESETS[k].label + '</option>';
+  return h;
+}
+function preset(name){
+  var box = document.getElementById("f-" + name);
+  if (!box) return;
+  var v = box.querySelector(".f-vendor").value;
+  var p = PRESETS[v] || {};
+  box.querySelector(".f-ep").value = p.ep || "";
+  box.querySelector(".f-bal").value = p.bal || "";
+  box.querySelector(".f-cur").value = p.cur || "";
+  box.querySelector(".f-lim").value = p.lim || "";
+  box.querySelector(".f-used").value = p.used || "";
+  box.querySelector(".f-usep").value = p.usedEp || "";
+  box.querySelector(".f-scale").value = p.scale || "1";
+  box.querySelector(".f-plan").value = p.plan || "";
+}
+function collectConfig(){
+  var cfg = {};
+  if (DATA && DATA.config) {
+    cfg.enabled = DATA.config.enabled !== false;
+    if (DATA.config.priority !== undefined) cfg.priority = DATA.config.priority;
+    if (DATA.config.profiles) cfg.profiles = JSON.parse(JSON.stringify(DATA.config.profiles));
+  } else { cfg.enabled = true; }
+  if (!cfg.profiles) cfg.profiles = {};
+  Object.keys(selected).forEach(function(name){
+    var box = document.getElementById("f-" + name);
+    var p = {};
+    var v = box.querySelector(".f-vendor").value;
+    if (v !== "custom") p.vendor = v;
+    [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["limit_path",".f-lim"],["used_path",".f-used"],["plan_path",".f-plan"]].forEach(function(m){
+      var val = box.querySelector(m[1]).value.trim();
+      if (val) p[m[0]] = val;
+    });
+    var sc = parseFloat(box.querySelector(".f-scale").value);
+    if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
+    cfg.profiles[name] = p;
+  });
+  var defBase = document.getElementById("defaultBase").value.trim();
+  if (defBase && !cfg.profiles["default"]) cfg.profiles["default"] = {base_url: defBase};
+  if (Object.keys(cfg.profiles).length === 1 && cfg.profiles["default"]) {
+    var only = cfg.profiles["default"];
+    delete cfg.profiles["default"];
     for (var k in only) cfg[k] = only[k];
-  } else if (count > 1) {
-    cfg.profiles = profs;
   }
   return cfg;
+}
+function saveAll(){
+  var cfg = collectConfig();
+  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
+  fetch("/v0/resource/plugins/api-balance/config-wizard" + qs)
+    .then(function(r){ return r.json(); })
+    .then(function(r){
+      msg(r.message || "", r.ok ? "ok" : "err");
+      if (r.ok) setTimeout(loadData, 600);
+    })
+    .catch(function(e){ msg("保存失败：" + e.message, "err"); });
+}
+function showYAML(){
+  document.getElementById("yamlBox").style.display = "block";
+  document.getElementById("out").value = toYAML(collectConfig());
+  msg("已生成 YAML，可复制手动保存", "ok");
 }
 function toYAML(obj, indent){
   var pad = indent || "";
@@ -1466,78 +1786,30 @@ function toYAML(obj, indent){
   for (var k in obj) {
     var v = obj[k];
     if (v === null || v === undefined) continue;
-    if (typeof v === "object") {
-      lines.push(pad + k + ":");
-      lines.push(toYAML(v, pad + "  "));
-    } else if (typeof v === "boolean" || typeof v === "number") {
-      lines.push(pad + k + ": " + v);
-    } else {
+    if (typeof v === "object") { lines.push(pad + k + ":"); lines.push(toYAML(v, pad + "  ")); }
+    else if (typeof v === "boolean" || typeof v === "number") { lines.push(pad + k + ": " + v); }
+    else {
       var s = String(v);
       if (/[:#\[\]{}&*!|>'"%@]/.test(s) || s === "" || /^[\s]|[\s]$/.test(s)) s = '"' + s.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
       lines.push(pad + k + ": " + s);
     }
   }
-  return lines.join("\\n");
+  return lines.join("\n");
 }
-function refreshOutput(){ document.getElementById("out").value = toYAML(collectConfig()); }
-function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
-function authHeaders(){
-  var k = document.getElementById("mgmtkey").value.trim();
-  var h = {"Content-Type":"application/json"};
-  if (k) h["Authorization"] = "Bearer " + k;
-  return h;
+function saveKey(){
+  var key = document.getElementById("mgmtkey").value.trim();
+  if (!key) { msg("请输入管理密钥", "err"); return; }
+  fetch("/v0/management/plugins/api-balance/config", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
+    body: JSON.stringify({management_key: key})
+  }).then(function(r){
+    if (!r.ok) throw new Error("HTTP " + r.status + "（密钥不对或无权限）");
+    msg("管理密钥已保存，正在加载供应商列表…", "ok");
+    document.getElementById("mgmtkey").value = "";
+    setTimeout(loadData, 600);
+  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); });
 }
-function loadCurrent(){
-  fetch("/v0/management/plugins/api-balance/config", {headers: authHeaders()})
-    .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function(cfg){ applyServerConfig(cfg); msg("已读取现有配置", "ok"); })
-    .catch(function(e){ msg("读取失败：" + e.message + "（可填写管理密钥后重试，或直接生成新配置）", "err"); });
-}
-function applyServerConfig(cfg){
-  if (!cfg || typeof cfg !== "object") return;
-  document.getElementById("enabled").value = cfg.enabled === false ? "false" : "true";
-  document.getElementById("profiles").innerHTML = "";
-  seq = 0;
-  var keys = cfg.profiles && typeof cfg.profiles === "object" ? Object.keys(cfg.profiles) : [];
-  if (keys.length === 0) {
-    var legacy = {};
-    for (var k in cfg) if (k !== "enabled" && k !== "priority" && k !== "headers" && k !== "query" && k !== "credential_paths") legacy[k] = cfg[k];
-    keys = Object.keys(legacy).length > 0 ? ["__top__"] : [];
-  }
-  keys.forEach(function(k){
-    var p = k === "__top__" ? legacy : (cfg.profiles[k] || {});
-    addProfile(k === "__top__" ? "default" : k, p.vendor || "custom");
-    var box = document.getElementById("p" + seq);
-    if (p.base_url) box.querySelector(".f-base").value = p.base_url;
-    if (p.endpoint) box.querySelector(".f-ep").value = p.endpoint;
-    if (p.balance_path) box.querySelector(".f-bal").value = p.balance_path;
-    if (p.currency_path) box.querySelector(".f-cur").value = p.currency_path;
-    if (p.limit_path) box.querySelector(".f-lim").value = p.limit_path;
-    if (p.used_path) box.querySelector(".f-used").value = p.used_path;
-    if (p.used_endpoint) box.querySelector(".f-usep").value = p.used_endpoint;
-    if (p.used_scale !== undefined) box.querySelector(".f-scale").value = p.used_scale;
-    if (p.plan_path) box.querySelector(".f-plan").value = p.plan_path;
-    if (p.window_name) box.querySelector(".f-win").value = p.window_name;
-  });
-  if (keys.length === 0) addProfile();
-  refreshOutput();
-}
-function saveConfig(){
-  var cfg = collectConfig();
-  refreshOutput();
-  fetch("/v0/management/plugins/api-balance/config", {method:"PUT", headers: authHeaders(), body: JSON.stringify(cfg)})
-    .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error("HTTP " + r.status + " " + t.slice(0,120)); }); msg("已保存！CPA 会自动热加载新配置。", "ok"); })
-    .catch(function(e){ msg("自动保存失败：" + e.message + "。请点「复制 YAML」手动粘贴到插件配置里保存。", "err"); });
-}
-function copyYAML(){
-  var t = document.getElementById("out");
-  t.select();
-  try { document.execCommand("copy"); msg("已复制，去插件配置里粘贴保存即可", "ok"); }
-  catch (e) { msg("复制失败，请手动选择文本复制", "err"); }
-}
-document.getElementById("profiles").addEventListener("input", refreshOutput);
-document.getElementById("profiles").addEventListener("change", refreshOutput);
-addProfile();
-refreshOutput();
+loadData();
 </script>
 </div></body></html>`
