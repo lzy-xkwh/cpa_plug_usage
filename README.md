@@ -4,15 +4,23 @@
 它通过 CPA 宿主的 `host.http.do` 桥接访问余额接口，避免插件自行创建
 网络客户端，并把响应转换为 CPA 的标准额度窗口。
 
-支持两类余额来源：
+支持三类余额来源：
 
-- **官方厂商**：内置 `deepseek`（DeepSeek）、`moonshot`（Kimi/Moonshot）
-  预设，配置一行 `vendor` 即可读取官方账户余额；
-- **中转站 / 自建网关**：New API、sub2api 等兼容站点，通过自定义
-  `endpoint` + 响应 JSON 路径适配，不需要重新编译插件。
+- **官方厂商**：内置 `deepseek`（DeepSeek）、`moonshot`（Kimi/Moonshot）、
+  `openrouter`（OpenRouter）预设，配置一行 `vendor` 即可读取官方账户余额；
+- **one-api 系中转面板**：`vendor: one-api` 自动使用 OpenAI 兼容账单接口，
+  支持 one-api / new-api / one-hub / done-hub / Veloera / VoAPI 等衍生版本，
+  只需提供站点地址；
+- **其它中转站 / 自建网关**：sub2api 等，通过自定义 `endpoint` +
+  响应 JSON 路径适配，不需要重新编译插件。
 
 > Z.AI（智谱）目前没有公开的余额查询 API，暂无法内置预设；
 > 待官方提供接口后可按同样的方式加入 `vendorPresets`。
+
+与浏览器扩展类工具（如 All API Hub）的差异：All API Hub 依赖登录浏览器的
+Cookie 会话读取面板数据；本插件只使用 CPA 存储中的 API Key，在服务端无人
+值守运行，适合与 CLIProxyAPI 的额度查询接口集成。若站点只提供面板接口而
+没有 API Key 余额端点，则无法用本插件读取。
 
 插件是**只读**的：不会充值、签到、改密钥或重置任何账户。
 
@@ -145,6 +153,44 @@ plugins:
 `balance_path: data.available_balance`。余额为人民币（含代金券）。
 国际站（platform.kimi.ai）Key 与国内站不通用，如需查询国际站余额，可
 显式覆盖 `endpoint: https://api.moonshot.ai/v1/users/me/balance`。
+
+### OpenRouter
+
+```yaml
+plugins:
+  configs:
+    api-balance:
+      enabled: true
+      priority: 10
+      vendor: openrouter
+```
+
+使用密钥信息接口 `GET https://openrouter.ai/api/v1/key`，余额按
+`data.limit - data.usage`（美元）推导。**注意**：未设置额度上限（unlimited）
+的密钥响应中没有 `data.limit`，此时无法读取余额。
+
+### one-api 系面板（one-api / new-api / one-hub / done-hub 等）
+
+```yaml
+plugins:
+  configs:
+    api-balance:
+      enabled: true
+      priority: 10
+      vendor: one-api
+      base_url: "https://站点域名"
+```
+
+插件会请求 OpenAI 兼容账单接口并自动推导余额：
+
+- 总额度：`GET {base_url}/v1/dashboard/billing/subscription`（`hard_limit_usd`
+  = 剩余 + 已用）；
+- 已用额度：`GET {base_url}/v1/dashboard/billing/usage`（`total_usage`，
+  单位为 0.01，即乘以 `used_scale: 0.01` 还原）；
+- 余额 = 总额度 − 已用额度。
+
+该公式在站点开启或关闭"按货币显示"时都成立。适用于 one-api 及其衍生
+项目（new-api、one-hub、done-hub、Veloera、VoAPI 旧版等）。
 
 ## CPA 配置（高级/自定义站点）
 

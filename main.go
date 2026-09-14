@@ -89,8 +89,11 @@ type config struct {
 	Enabled           bool              `yaml:"enabled"`
 	Priority          int               `yaml:"priority"`
 	Vendor            string            `yaml:"vendor"`
+	BaseURL           string            `yaml:"base_url"`
 	Endpoint          string            `yaml:"endpoint"`
+	UsedEndpoint      string            `yaml:"used_endpoint"`
 	Method            string            `yaml:"method"`
+	UsedScale         float64           `yaml:"used_scale"`
 	Headers           map[string]string `yaml:"headers"`
 	Query             map[string]string `yaml:"query"`
 	CredentialPaths   []string          `yaml:"credential_paths"`
@@ -111,6 +114,8 @@ type config struct {
 // 预设只填补未显式配置的字段，用户配置始终优先。
 type vendorPreset struct {
 	Endpoint     string
+	UsedEndpoint string
+	UsedScale    float64
 	BalancePath  string
 	UsedPath     string
 	LimitPath    string
@@ -131,9 +136,26 @@ var vendorPresets = map[string]vendorPreset{
 		BalancePath: "data.available_balance",
 		WindowName: "余额",
 	},
+	// one-api 系（one-api / new-api / one-hub / done-hub 等）：
+	// hard_limit_usd = 剩余 + 已用，total_usage = 已用 × 100，
+	// 余额 = hard_limit_usd - total_usage × 0.01，与站点显示单位配置无关。
+	"one-api": {
+		Endpoint:     "{base_url}/v1/dashboard/billing/subscription",
+		UsedEndpoint: "{base_url}/v1/dashboard/billing/usage",
+		UsedScale:    0.01,
+		UsedPath:     "total_usage",
+		LimitPath:    "hard_limit_usd",
+		WindowName:   "余额",
+	},
+	"openrouter": {
+		Endpoint:  "https://openrouter.ai/api/v1/key",
+		UsedPath:  "data.usage",
+		LimitPath: "data.limit",
+		WindowName: "余额",
+	},
 }
 
-var vendorNames = []string{"custom", "deepseek", "moonshot"}
+var vendorNames = []string{"custom", "deepseek", "moonshot", "one-api", "openrouter"}
 
 type quotaFetchRequest struct {
 	AuthIndex   string            `json:"auth_index"`
@@ -324,7 +346,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.2.0",
+			Version:          "0.3.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -332,6 +354,9 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
 				{Name: "vendor", Type: "enum", Description: "内置厂商预设，自动填充接口地址与余额路径；显式配置的字段优先。custom 表示完全自定义。", EnumValues: vendorNames},
 				{Name: "endpoint", Type: "string", Description: "余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符；vendor 预设已含官方地址，仅自定义时填写。"},
+				{Name: "used_endpoint", Type: "string", Description: "可选，已用额度的独立查询地址（如 one-api 系的 billing/usage）；留空则从主响应中取已用额度。"},
+				{Name: "used_scale", Type: "string", Description: "可选，已用额度的换算倍率，例如 one-api 系 usage 单位为美分时填 0.01；默认 1。"},
+				{Name: "base_url", Type: "string", Description: "可选，one-api 系等预设中 {base_url} 占位符使用的站点地址；未填写时使用凭据属性中的 base_url。"},
 				{Name: "method", Type: "enum", Description: "余额请求使用的 HTTP 方法。", EnumValues: []string{"GET", "POST"}},
 				{Name: "credential_paths", Type: "string", Description: "在 CPA storage_json 中查找令牌/API Key 的 JSON 路径，多个用英文逗号分隔。"},
 				{Name: "credential_header", Type: "string", Description: "承载凭据的请求头，例如 Authorization 或 Cookie。"},
@@ -369,6 +394,12 @@ func applyConfig(raw []byte) error {
 		if next.Endpoint == "" {
 			next.Endpoint = preset.Endpoint
 		}
+		if next.UsedEndpoint == "" {
+			next.UsedEndpoint = preset.UsedEndpoint
+		}
+		if preset.UsedScale != 0 && next.UsedScale == 0 {
+			next.UsedScale = preset.UsedScale
+		}
 		if next.BalancePath == "" {
 			next.BalancePath = preset.BalancePath
 		}
@@ -404,13 +435,17 @@ func applyConfig(raw []byte) error {
 	if next.TimeoutSeconds <= 0 {
 		next.TimeoutSeconds = 15
 	}
+	if next.UsedScale <= 0 {
+		next.UsedScale = 1
+	}
 	if next.WindowName == "" {
 		next.WindowName = "balance"
 	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
 	}
-	if next.Endpoint != "" {
+	// 含 {base_url} 等占位符的地址在运行时展开后再校验。
+	if next.Endpoint != "" && !strings.Contains(next.Endpoint, "{") {
 		if _, err := validateEndpoint(next.Endpoint, next.AllowInsecureHTTP); err != nil {
 			return err
 		}
@@ -511,6 +546,16 @@ func setConfigScalar(out *config, key, value string) error {
 		out.Endpoint = value
 	case "vendor":
 		out.Vendor = value
+	case "base_url":
+		out.BaseURL = value
+	case "used_endpoint":
+		out.UsedEndpoint = value
+	case "used_scale":
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("used_scale 必须是数字")
+		}
+		out.UsedScale = parsed
 	case "method":
 		out.Method = value
 	case "credential_paths":
@@ -605,12 +650,30 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	if cfg.Endpoint == "" {
 		return quotaFetchResponse{}, errors.New("未配置 endpoint（余额接口地址）")
 	}
-	if cfg.BalancePath == "" {
-		return quotaFetchResponse{}, errors.New("未配置 balance_path（余额字段路径）")
+	if cfg.BalancePath == "" && (cfg.LimitPath == "" || cfg.UsedPath == "") {
+		return quotaFetchResponse{}, errors.New("未配置 balance_path，且缺少 limit_path + used_path 组合（无法推导余额）")
 	}
-	endpoint := expandEndpoint(cfg.Endpoint, req)
-	if _, err := validateEndpoint(endpoint, cfg.AllowInsecureHTTP); err != nil {
+	document, err := fetchBalanceDocument(cfg.Endpoint, cfg, req, true)
+	if err != nil {
 		return quotaFetchResponse{}, err
+	}
+	usedDocument := document
+	hasUsedDocument := false
+	if cfg.UsedEndpoint != "" {
+		if second, err := fetchBalanceDocument(cfg.UsedEndpoint, cfg, req, false); err == nil {
+			usedDocument = second
+			hasUsedDocument = true
+		}
+	}
+	return normalizeQuota(document, usedDocument, hasUsedDocument, cfg)
+}
+
+// fetchBalanceDocument 请求一个余额相关端点并解析为 JSON 文档。
+// withQuery 表示是否合并配置中的固定 query 参数（仅主端点使用）。
+func fetchBalanceDocument(endpointTemplate string, cfg config, req quotaFetchRequest, withQuery bool) (any, error) {
+	endpoint := expandEndpoint(endpointTemplate, cfg.BaseURL, req)
+	if _, err := validateEndpoint(endpoint, cfg.AllowInsecureHTTP); err != nil {
+		return nil, err
 	}
 	headers := make(map[string][]string, len(cfg.Headers)+1)
 	for name, value := range cfg.Headers {
@@ -620,10 +683,10 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	if credential != "" && cfg.CredentialHeader != "" {
 		headers[cfg.CredentialHeader] = []string{cfg.CredentialPrefix + credential}
 	}
-	if len(cfg.Query) > 0 {
+	if withQuery && len(cfg.Query) > 0 {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			return quotaFetchResponse{}, fmt.Errorf("解析 endpoint 失败: %w", err)
+			return nil, fmt.Errorf("解析 endpoint 失败: %w", err)
 		}
 		query := parsed.Query()
 		for name, value := range cfg.Query {
@@ -639,25 +702,37 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	}
 	response, err := callHostHTTP(request)
 	if err != nil {
-		return quotaFetchResponse{}, err
+		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return quotaFetchResponse{}, fmt.Errorf("余额接口返回 HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("余额接口返回 HTTP %d", response.StatusCode)
 	}
 	var document any
 	if err := json.Unmarshal(response.Body, &document); err != nil {
-		return quotaFetchResponse{}, fmt.Errorf("余额接口返回的不是有效 JSON: %w", err)
+		return nil, fmt.Errorf("余额接口返回的不是有效 JSON: %w", err)
 	}
-	return normalizeQuota(document, cfg)
+	return document, nil
 }
 
-func normalizeQuota(document any, cfg config) (quotaFetchResponse, error) {
-	balance, ok := numberAt(document, cfg.BalancePath)
-	if !ok {
+func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg config) (quotaFetchResponse, error) {
+	balance, hasBalance := numberAt(document, cfg.BalancePath)
+	used, hasUsed := numberAt(usedDocument, cfg.UsedPath)
+	if !hasUsed && hasUsedDocument {
+		// 第二端点解析失败时回退到主文档。
+		used, hasUsed = numberAt(document, cfg.UsedPath)
+	}
+	if hasUsed && cfg.UsedScale != 1 {
+		used *= cfg.UsedScale
+	}
+	limit, hasLimit := numberAt(document, cfg.LimitPath)
+	if !hasBalance && hasLimit && hasUsed {
+		// 只有总额度与已用额度时，余额 = 总额度 - 已用。
+		balance = limit - used
+		hasBalance = true
+	}
+	if !hasBalance {
 		return quotaFetchResponse{}, fmt.Errorf("balance_path %q 未解析到数字", cfg.BalancePath)
 	}
-	used, hasUsed := numberAt(document, cfg.UsedPath)
-	limit, hasLimit := numberAt(document, cfg.LimitPath)
 	if !hasLimit && hasUsed {
 		limit = balance + used
 		hasLimit = limit > 0
@@ -820,8 +895,10 @@ func valueAt(document any, path string) (any, bool) {
 	return current, true
 }
 
-func expandEndpoint(endpoint string, req quotaFetchRequest) string {
-	baseURL := req.Attributes["base_url"]
+func expandEndpoint(endpoint string, baseURL string, req quotaFetchRequest) string {
+	if baseURL == "" {
+		baseURL = req.Attributes["base_url"]
+	}
 	if baseURL == "" {
 		baseURL = req.Attributes["baseURL"]
 	}

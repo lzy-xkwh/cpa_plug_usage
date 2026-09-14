@@ -89,6 +89,51 @@ func TestUnknownVendorRejected(t *testing.T) {
 	}
 }
 
+func TestOneApiPresetAndDerivedBalance(t *testing.T) {
+	if err := applyConfig([]byte("vendor: one-api\nbase_url: https://relay.example.com\n")); err != nil {
+		t.Fatalf("applyConfig() error for one-api preset = %v", err)
+	}
+	got := currentConfig()
+	if got.Endpoint != "{base_url}/v1/dashboard/billing/subscription" || got.UsedEndpoint != "{base_url}/v1/dashboard/billing/usage" {
+		t.Fatalf("endpoints = %q / %q", got.Endpoint, got.UsedEndpoint)
+	}
+	if got.UsedScale != 0.01 || got.LimitPath != "hard_limit_usd" || got.UsedPath != "total_usage" {
+		t.Fatalf("preset fields = scale %v, limit %q, used %q", got.UsedScale, got.LimitPath, got.UsedPath)
+	}
+	document := map[string]any{"hard_limit_usd": 10.0}
+	usedDocument := map[string]any{"total_usage": 250.0}
+	resp, err := normalizeQuota(document, usedDocument, true, got)
+	if err != nil {
+		t.Fatalf("normalizeQuota() error = %v", err)
+	}
+	bucket := resp.Groups[0].Buckets[0]
+	if bucket.RemainingFraction != 0.75 {
+		t.Fatalf("remaining fraction = %v, want 0.75", bucket.RemainingFraction)
+	}
+}
+
+func TestOpenRouterPreset(t *testing.T) {
+	if err := applyConfig([]byte("vendor: openrouter\n")); err != nil {
+		t.Fatalf("applyConfig() error for openrouter preset = %v", err)
+	}
+	got := currentConfig()
+	if got.Endpoint != "https://openrouter.ai/api/v1/key" || got.LimitPath != "data.limit" || got.UsedPath != "data.usage" {
+		t.Fatalf("preset fields = %q / %q / %q", got.Endpoint, got.LimitPath, got.UsedPath)
+	}
+}
+
+func TestExpandEndpointBaseURLPrecedence(t *testing.T) {
+	req := quotaFetchRequest{Attributes: map[string]string{"base_url": "https://from-auth.example.com/"}}
+	got := expandEndpoint("{base_url}/v1/x", "https://from-config.example.com/", req)
+	if got != "https://from-config.example.com/v1/x" {
+		t.Fatalf("expandEndpoint() = %q", got)
+	}
+	got = expandEndpoint("{base_url}/v1/x", "", req)
+	if got != "https://from-auth.example.com/v1/x" {
+		t.Fatalf("expandEndpoint() fallback = %q", got)
+	}
+}
+
 func TestDecodeConfigVisualCredentialPaths(t *testing.T) {
 	var got config
 	err := decodeConfig([]byte(`
@@ -115,7 +160,7 @@ func TestNormalizeQuota(t *testing.T) {
 			"plan":     "pro",
 		},
 	}
-	resp, err := normalizeQuota(document, config{
+	resp, err := normalizeQuota(document, document, false, config{
 		BalancePath:  "data.balance",
 		LimitPath:    "data.limit",
 		UsedPath:     "data.used",
