@@ -232,6 +232,26 @@ plugins:
   报错；
 - 插件会在配置重载时把所有档案名动态声明为可服务的 provider，无需重启。
 
+## 自动识别（零配置优先）
+
+插件会自动利用 CPA 凭据里已有的信息，尽量不要求手动配置：
+
+1. **API Key**：默认从凭据 `storage_json` 的 `access_token`/`api_key` 等常见
+   字段自动查找，按 `Authorization: Bearer <key>` 发送；
+2. **站点地址**：依次从凭据属性、metadata、`storage_json` 中查找
+   `base_url`/`baseURL`/`api_base` 等常见字段（也可用配置项 `base_url` 显式
+   指定，优先级最高）；
+3. **厂商识别**：凭据的 `provider` 名就是厂商名（如 `deepseek`、`moonshot`、
+   `openrouter`、`new-api`、`sub2api`、`one-api`）时，自动套用对应预设；
+4. **域名特征**：站点地址含 `deepseek` / `moonshot` / `openrouter` 时自动
+   识别；
+5. **接口探测**：其余站点按 New API（`/api/usage/token/`）→ sub2api
+   （`/v1/usage`）→ one-api（billing 账单对）的顺序探测，成功策略按站点
+   缓存，后续查询不再重复探测。
+
+只有自动识别全部失败时才会报错，错误信息会明确提示需要补什么：在
+`profiles` 中为该凭据添加档案，或在凭据 JSON 中补充 `base_url` 字段。
+
 ## CPA 配置（高级/自定义站点）
 
 自定义中转站或任何返回 JSON 的余额接口，使用 `vendor: custom`（默认）：

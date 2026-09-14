@@ -137,9 +137,9 @@ var vendorPresets = map[string]vendorPreset{
 		WindowName:   "余额",
 	},
 	"moonshot": {
-		Endpoint:   "https://api.moonshot.cn/v1/users/me/balance",
+		Endpoint:    "https://api.moonshot.cn/v1/users/me/balance",
 		BalancePath: "data.available_balance",
-		WindowName: "余额",
+		WindowName:  "余额",
 	},
 	// one-api 系（one-api / new-api / one-hub / done-hub 等）：
 	// hard_limit_usd = 剩余 + 已用，total_usage = 已用 × 100，
@@ -153,14 +153,38 @@ var vendorPresets = map[string]vendorPreset{
 		WindowName:   "余额",
 	},
 	"openrouter": {
-		Endpoint:  "https://openrouter.ai/api/v1/key",
-		UsedPath:  "data.usage",
-		LimitPath: "data.limit",
+		Endpoint:   "https://openrouter.ai/api/v1/key",
+		UsedPath:   "data.usage",
+		LimitPath:  "data.limit",
 		WindowName: "余额",
+	},
+	"new-api": {
+		Endpoint:    "{base_url}/api/usage/token/",
+		BalancePath: "data.total_available",
+		LimitPath:   "data.total_granted",
+		UsedPath:    "data.total_used",
+		PlanPath:    "data.name",
+		WindowName:  "余额",
+	},
+	"sub2api": {
+		Endpoint:     "{base_url}/v1/usage",
+		BalancePath:  "remaining",
+		LimitPath:    "quota.limit",
+		UsedPath:     "quota.used",
+		CurrencyPath: "unit",
+		PlanPath:     "planName",
+		WindowName:   "余额",
 	},
 }
 
-var vendorNames = []string{"custom", "deepseek", "moonshot", "one-api", "openrouter"}
+var vendorNames = []string{"custom", "deepseek", "moonshot", "one-api", "openrouter", "new-api", "sub2api"}
+
+// autoProbeStrategies 未匹配厂商时按顺序探测的常见站点类型。
+var autoProbeStrategies = []string{"new-api", "sub2api", "one-api"}
+
+// strategyCache 记录 base_url → 已识别成功的站点类型（config），
+// 避免每次查询都重复探测。
+var strategyCache sync.Map
 
 type quotaFetchRequest struct {
 	AuthIndex   string            `json:"auth_index"`
@@ -351,7 +375,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.4.0",
+			Version:          "0.5.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -756,13 +780,26 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	if !cfg.Enabled {
 		return quotaFetchResponse{}, errors.New("插件未启用，请在配置中设置 enabled: true")
 	}
-	profile, err := resolveProfile(cfg, req.Provider)
-	if err != nil {
-		return quotaFetchResponse{}, err
+	profile, profileErr := resolveProfile(cfg, req.Provider)
+	if profileErr != nil || profile.Endpoint == "" {
+		// 显式配置不可用：尝试凭据自动识别（厂商名 / 域名特征 / 接口探测）。
+		auto, result, autoErr := autoDetectProfile(cfg, req)
+		if autoErr != nil {
+			if profileErr != nil {
+				return quotaFetchResponse{}, profileErr
+			}
+			return quotaFetchResponse{}, autoErr
+		}
+		if result != nil {
+			return *result, nil
+		}
+		profile = auto
 	}
-	if profile.Endpoint == "" {
-		return quotaFetchResponse{}, errors.New("未配置 endpoint（余额接口地址）")
-	}
+	return fetchQuotaWithProfile(profile, req)
+}
+
+// fetchQuotaWithProfile 使用已解析的档案完成一次余额查询。
+func fetchQuotaWithProfile(profile config, req quotaFetchRequest) (quotaFetchResponse, error) {
 	if profile.BalancePath == "" && (profile.LimitPath == "" || profile.UsedPath == "") {
 		return quotaFetchResponse{}, errors.New("未配置 balance_path，且缺少 limit_path + used_path 组合（无法推导余额）")
 	}
@@ -779,6 +816,124 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 		}
 	}
 	return normalizeQuota(document, usedDocument, hasUsedDocument, profile)
+}
+
+// autoDetectProfile 在用户未配置（或配置不匹配）时，自动为凭据选择余额策略：
+// 1. provider 名即为厂商名；2. base_url 域名特征；3. 已缓存的探测结果；
+// 4. 按常见站点类型逐个探测。全部失败时返回指导性的错误信息。
+// 探测直接命中时 result 非空（复用探测请求的结果，避免重复查询）。
+func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchResponse, error) {
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	if _, ok := vendorPresets[provider]; ok {
+		profile := cfg
+		profile.Vendor = provider
+		if err := applyVendorPreset(&profile); err != nil {
+			return config{}, nil, err
+		}
+		if strings.Contains(profile.Endpoint, "{base_url}") {
+			baseURL := discoverBaseURL(&profile, req)
+			if baseURL == "" {
+				return config{}, nil, missingBaseURLError(provider)
+			}
+			profile.BaseURL = baseURL
+		}
+		normalizeDefaults(&profile)
+		return profile, nil, nil
+	}
+
+	baseURL := discoverBaseURL(&cfg, req)
+	if baseURL == "" {
+		return config{}, nil, missingBaseURLError(provider)
+	}
+
+	if vendor := vendorByHost(baseURL); vendor != "" {
+		profile := cfg
+		profile.BaseURL = baseURL
+		profile.Vendor = vendor
+		if err := applyVendorPreset(&profile); err != nil {
+			return config{}, nil, err
+		}
+		normalizeDefaults(&profile)
+		return profile, nil, nil
+	}
+
+	if cached, ok := strategyCache.Load(baseURL); ok {
+		if profile, ok := cached.(config); ok {
+			return profile, nil, nil
+		}
+	}
+
+	var lastErr error
+	for _, vendor := range autoProbeStrategies {
+		if _, ok := vendorPresets[vendor]; !ok {
+			continue
+		}
+		profile := cfg
+		profile.BaseURL = baseURL
+		profile.Vendor = vendor
+		if err := applyVendorPreset(&profile); err != nil {
+			continue
+		}
+		normalizeDefaults(&profile)
+		result, err := fetchQuotaWithProfile(profile, req)
+		if err == nil {
+			strategyCache.Store(baseURL, profile)
+			// 探测成功即复用真实结果。
+			return profile, &result, nil
+		}
+		lastErr = err
+	}
+	return config{}, nil, fmt.Errorf(
+		"自动识别失败：已依次尝试 %s 的常见余额接口（base_url=%s），最后错误：%v。请在插件配置中为该凭据手动指定 profiles 或 vendor/endpoint/balance_path，并确认 API Key 有效",
+		strings.Join(autoProbeStrategies, " → "), baseURL, lastErr)
+}
+
+func missingBaseURLError(provider string) error {
+	return fmt.Errorf(
+		"无法自动识别余额接口：凭据 provider %q 未匹配任何厂商，且凭据中未找到 base_url 等站点地址字段。请在插件配置的 profiles 中为 %q 添加档案（vendor/endpoint），或在凭据 JSON 中补充 base_url 字段",
+		provider, provider)
+}
+
+// discoverBaseURL 依次从配置、凭据属性、metadata、storage_json 中寻找站点地址。
+func discoverBaseURL(cfg *config, req quotaFetchRequest) string {
+	if cfg.BaseURL != "" {
+		return strings.TrimRight(cfg.BaseURL, "/")
+	}
+	keys := []string{"base_url", "baseURL", "baseUrl", "api_base", "api_base_url", "site_url", "endpoint"}
+	for _, key := range keys {
+		if v, ok := req.Attributes[key]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimRight(strings.TrimSpace(v), "/")
+		}
+		if v, ok := req.Metadata[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimRight(strings.TrimSpace(v), "/")
+		}
+	}
+	if len(req.StorageJSON) > 0 {
+		var document any
+		if json.Unmarshal(req.StorageJSON, &document) == nil {
+			for _, key := range keys {
+				if v, ok := stringAt(document, key); ok && strings.TrimSpace(v) != "" {
+					return strings.TrimRight(strings.TrimSpace(v), "/")
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// vendorByHost 依据站点域名特征识别厂商。
+func vendorByHost(baseURL string) string {
+	host := strings.ToLower(baseURL)
+	switch {
+	case strings.Contains(host, "deepseek"):
+		return "deepseek"
+	case strings.Contains(host, "moonshot"):
+		return "moonshot"
+	case strings.Contains(host, "openrouter"):
+		return "openrouter"
+	default:
+		return ""
+	}
 }
 
 // fetchBalanceDocument 请求一个余额相关端点并解析为 JSON 文档。

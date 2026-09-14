@@ -291,3 +291,75 @@ profiles:
 		}
 	}
 }
+
+func TestDiscoverBaseURL(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"base_url": "https://relay.example.com/"})
+	req := quotaFetchRequest{StorageJSON: raw}
+	cfg := config{}
+	if got := discoverBaseURL(&cfg, req); got != "https://relay.example.com" {
+		t.Fatalf("storage_json discovery = %q", got)
+	}
+	req2 := quotaFetchRequest{Metadata: map[string]any{"api_base": "https://meta.example.com"}}
+	if got := discoverBaseURL(&cfg, req2); got != "https://meta.example.com" {
+		t.Fatalf("metadata discovery = %q", got)
+	}
+	req3 := quotaFetchRequest{Attributes: map[string]string{"baseURL": "https://attr.example.com"}}
+	if got := discoverBaseURL(&cfg, req3); got != "https://attr.example.com" {
+		t.Fatalf("attributes discovery = %q", got)
+	}
+	if got := discoverBaseURL(&cfg, quotaFetchRequest{}); got != "" {
+		t.Fatalf("empty discovery = %q", got)
+	}
+	if got := discoverBaseURL(&config{BaseURL: "https://config.example.com"}, quotaFetchRequest{}); got != "https://config.example.com" {
+		t.Fatalf("config base_url precedence = %q", got)
+	}
+}
+
+func TestVendorByHost(t *testing.T) {
+	cases := map[string]string{
+		"https://api.deepseek.com":     "deepseek",
+		"https://api.moonshot.cn/v1":   "moonshot",
+		"https://openrouter.ai/api/v1": "openrouter",
+		"https://relay.example.com":    "",
+	}
+	for input, want := range cases {
+		if got := vendorByHost(input); got != want {
+			t.Fatalf("vendorByHost(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestAutoDetectByProviderName(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	cfg := currentConfig()
+	profile, result, err := autoDetectProfile(cfg, quotaFetchRequest{Provider: "deepseek"})
+	if err != nil || result != nil {
+		t.Fatalf("autoDetectProfile(deepseek) err=%v result=%v", err, result)
+	}
+	if profile.Endpoint != "https://api.deepseek.com/user/balance" || profile.BalancePath != "balance_infos.0.total_balance" {
+		t.Fatalf("deepseek auto profile = %#v", profile)
+	}
+	profile, result, err = autoDetectProfile(cfg, quotaFetchRequest{
+		Provider: "sub2api",
+		Metadata: map[string]any{"base_url": "https://relay.example.com"},
+	})
+	if err != nil || result != nil {
+		t.Fatalf("autoDetectProfile(sub2api) err=%v result=%v", err, result)
+	}
+	if profile.BaseURL != "https://relay.example.com" || profile.Endpoint != "{base_url}/v1/usage" {
+		t.Fatalf("sub2api auto profile = %#v", profile)
+	}
+}
+
+func TestAutoDetectMissingBaseURLGuidance(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	cfg := currentConfig()
+	_, _, err := autoDetectProfile(cfg, quotaFetchRequest{Provider: "some-relay"})
+	if err == nil || !strings.Contains(err.Error(), "profiles") {
+		t.Fatalf("autoDetectProfile() error = %v, want guidance mentioning profiles", err)
+	}
+}
