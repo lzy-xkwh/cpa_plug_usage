@@ -371,11 +371,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}), nil
 	case "management.register":
 		return okEnvelope(map[string]any{
-			"resources": []map[string]any{{
-				"path":        "/config-wizard",
-				"menu":        "余额配置向导",
-				"description": "自动列出已配置供应商并生成/保存余额配置，无需手写 YAML",
-			}},
+			"resources": []map[string]any{
+				{
+					"path":        "/config-wizard",
+					"menu":        "余额",
+					"description": "查看与配置各供应商余额，无需手写 YAML",
+				},
+				{
+					// 数据端点：不带 menu，不出现在管理菜单里，仅供页面调用。
+					"path":        "/config-data",
+					"description": "向导页数据源：当前配置与供应商余额支持状态",
+				},
+			},
 		}), nil
 	case "management.handle":
 		return handleManagementRPC(request)
@@ -389,7 +396,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.1",
+			Version:          "0.7.2",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{

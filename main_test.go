@@ -378,8 +378,8 @@ func TestManagementRegisterAndHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("management.register error = %v", err)
 	}
-	if !strings.Contains(string(raw), "config-wizard") || !strings.Contains(string(raw), "余额配置向导") {
-		t.Fatalf("register response missing wizard route: %s", raw)
+	if !strings.Contains(string(raw), "config-wizard") || !strings.Contains(string(raw), "config-data") || !strings.Contains(string(raw), "\"余额\"") {
+		t.Fatalf("register response missing wizard/data routes: %s", raw)
 	}
 	raw, err = handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard"}`))
 	if err != nil {
