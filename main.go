@@ -351,7 +351,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "quota.describe":
 		return okEnvelope(quotaDescribeResponse{
 			SupportedProviders: supportedProviders(),
-			DisplayName:        "API 余额查询",
+			DisplayName:        "供应商余额查询",
 			SupportsReset:      false,
 		}), nil
 	case "quota.fetch":
@@ -389,7 +389,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.0",
+			Version:          "0.7.1",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1647,13 +1647,27 @@ var DATA = null;
 var selected = {};
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
+function fetchTimeout(url, opts, ms){
+  opts = opts || {};
+  opts.signal = AbortSignal.timeout ? AbortSignal.timeout(ms || 10000) : undefined;
+  return fetch(url, opts);
+}
+function loadError(text){
+  document.getElementById("provRows").innerHTML = '<tr><td colspan="4" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
+  document.getElementById("provNote").textContent = "";
+}
 function loadData(){
-  fetch("/v0/resource/plugins/api-balance/config-data").then(function(r){ return r.json(); }).then(function(d){
+  fetchTimeout("/v0/resource/plugins/api-balance/config-data", {}, 10000).then(function(r){
+    if (r.status === 404) { loadError("数据端点不存在（404）：当前运行的插件还是旧版本。请到 插件商店 把 api-balance 更新到最新版，然后刷新本页。"); return null; }
+    if (!r.ok) { loadError("加载数据失败（HTTP " + r.status + "），请刷新重试。"); return null; }
+    return r.json();
+  }).then(function(d){
+    if (!d) return;
     DATA = d;
     document.getElementById("setupCard").style.display = d.management_configured ? "none" : "block";
     renderProviders(d);
     renderForms();
-  }).catch(function(e){ msg("加载数据失败：" + e.message, "err"); });
+  }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); });
 }
 function renderProviders(d){
   var rows = document.getElementById("provRows");
@@ -1767,7 +1781,7 @@ function collectConfig(){
 function saveAll(){
   var cfg = collectConfig();
   var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
-  fetch("/v0/resource/plugins/api-balance/config-wizard" + qs)
+  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
     .then(function(r){ return r.json(); })
     .then(function(r){
       msg(r.message || "", r.ok ? "ok" : "err");
@@ -1799,11 +1813,11 @@ function toYAML(obj, indent){
 function saveKey(){
   var key = document.getElementById("mgmtkey").value.trim();
   if (!key) { msg("请输入管理密钥", "err"); return; }
-  fetch("/v0/management/plugins/api-balance/config", {
+  fetchTimeout("/v0/management/plugins/api-balance/config", {
     method: "PATCH",
     headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
     body: JSON.stringify({management_key: key})
-  }).then(function(r){
+  }, 10000).then(function(r){
     if (!r.ok) throw new Error("HTTP " + r.status + "（密钥不对或无权限）");
     msg("管理密钥已保存，正在加载供应商列表…", "ok");
     document.getElementById("mgmtkey").value = "";

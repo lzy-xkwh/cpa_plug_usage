@@ -3,20 +3,23 @@
   "plugins": [
     {
       "id": "api-balance",
-      "name": "API Balance",
-      "description": "Reads account balance and quota from official LLM vendors (DeepSeek, Kimi/Moonshot) and New API / sub2api compatible relay gateways.",
+      "name": "供应商余额",
+      "description": "自动查询各供应商与中转站余额并在 CPA 供应商页签展示：支持 DeepSeek、Kimi、OpenRouter、one-api / New API / sub2api 系站点；零配置自动识别、多供应商并存、管理后台内置中文配置向导（官方无余额接口的供应商会明确标注）。",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
-        "quota",
         "balance",
+        "quota",
         "deepseek",
         "moonshot",
+        "openrouter",
+        "one-api",
         "new-api",
-        "sub2api"
+        "sub2api",
+        "中文"
       ],
       "install": {
         "type": "direct",
@@ -24,17 +27,18 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.7.0/api-balance_0.7.0_linux_amd64.zip",
-            "sha256": "ef9942694e858fa3cbaaae47f780e9631804221ef2bf97701d25a41ee6e904ef"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.7.1/api-balance_0.7.1_linux_amd64.zip",
+            "sha256": "PENDING_CI"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.7.0/api-balance_0.7.0_linux_arm64.zip",
-            "sha256": "9379e7cb04d6951e50e060d4068dec40460f7c3480bc037104826b872695be07"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.7.1/api-balance_0.7.1_linux_arm64.zip",
+            "sha256": "PENDING_CI"
           }
         ]
-      }
+      },
+      "logo": "https://cdn.jsdelivr.net/gh/lzy-xkwh/cpa_plug_usage@main/assets/logo.svg"
     }
   ]
 }
