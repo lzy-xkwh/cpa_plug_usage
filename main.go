@@ -72,7 +72,7 @@ import (
 
 const (
 	abiVersion    = 1
-	schemaVersion = 1
+	schemaVersion = 6
 	pluginID      = "api-balance"
 	providerID    = "api-balance"
 )
@@ -396,7 +396,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.2",
+			Version:          "0.7.3",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1302,10 +1302,18 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return nil, fmt.Errorf("解析管理请求失败: %w", err)
 	}
 	if saveJSON := firstQuery(req.Query, "save"); saveJSON != "" {
-		return okEnvelope(saveConfigViaManagementAPI(saveJSON)), nil
+		payload, err := json.Marshal(saveConfigViaManagementAPI(saveJSON))
+		if err != nil {
+			return nil, fmt.Errorf("编码保存结果失败: %w", err)
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/config-data") {
-		return okEnvelope(configDataResponse()), nil
+		payload, err := json.Marshal(configDataResponse())
+		if err != nil {
+			return nil, fmt.Errorf("编码向导数据失败: %w", err)
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	switch req.Method {
 	case http.MethodGet, "":
@@ -1325,6 +1333,15 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 
 func configWizardPage() string {
 	return wizardHTML
+}
+
+// managementJSONResponse 把 JSON 载荷包装成宿主期待的 ManagementResponse。
+func managementJSONResponse(payload []byte) map[string]any {
+	return map[string]any{
+		"StatusCode": 200,
+		"Headers":    map[string][]string{"Content-Type": {"application/json; charset=utf-8"}},
+		"Body":       payload,
+	}
 }
 
 // knownNoBalanceProviders 官方侧没有公开余额接口的内置供应商，

@@ -433,15 +433,85 @@ func TestConfigDataSanitizesManagementKey(t *testing.T) {
 	if strings.Contains(string(raw), "secret-do-not-leak") {
 		t.Fatalf("config-data leaked management_key: %s", raw)
 	}
+	resp := decodeManagementResponse(t, raw)
+	if resp.StatusCode != 200 || len(resp.Body) == 0 {
+		t.Fatalf("config-data status=%d bodyLen=%d", resp.StatusCode, len(resp.Body))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("config-data body is not JSON: %v (%s)", err, resp.Body)
+	}
+	if payload["management_configured"] != true {
+		t.Fatalf("management_configured = %v (%s)", payload["management_configured"], resp.Body)
+	}
+}
+
+// 回归：/config-data 必须返回非空 JSON body（此前漏包 ManagementResponse
+// 导致宿主回 200 空响应，页面报 Unexpected end of JSON input）。
+func TestConfigDataReturnsJSONBody(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-data"}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	resp := decodeManagementResponse(t, raw)
+	if resp.StatusCode != 200 || len(resp.Body) == 0 {
+		t.Fatalf("config-data status=%d bodyLen=%d", resp.StatusCode, len(resp.Body))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("config-data body is not JSON: %v (%s)", err, resp.Body)
+	}
+	if _, ok := payload["providers"]; !ok {
+		t.Fatalf("config-data payload missing providers: %s", resp.Body)
+	}
+}
+
+// 回归：保存接口同样必须返回非空 JSON body。
+func TestSaveReturnsJSONBody(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard","query":{"save":["{\"enabled\":true}"]}}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	resp := decodeManagementResponse(t, raw)
+	if resp.StatusCode != 200 || len(resp.Body) == 0 {
+		t.Fatalf("save status=%d bodyLen=%d", resp.StatusCode, len(resp.Body))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("save body is not JSON: %v (%s)", err, resp.Body)
+	}
+	if ok, _ := payload["ok"].(bool); ok {
+		t.Fatalf("save without management_key should fail: %s", resp.Body)
+	}
+}
+
+func decodeManagementResponse(t *testing.T, raw []byte) struct {
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers"`
+	Body       []byte              `json:"Body"`
+} {
 	var env struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			ManagementConfigured bool `json:"management_configured"`
-		} `json:"result"`
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
 	}
-	if err := json.Unmarshal(raw, &env); err != nil || !env.OK || !env.Result.ManagementConfigured {
-		t.Fatalf("config-data envelope = %s (%v)", raw, err)
+	if err := json.Unmarshal(raw, &env); err != nil || !env.OK {
+		t.Fatalf("envelope = %s (%v)", raw, err)
 	}
+	var resp struct {
+		StatusCode int                 `json:"StatusCode"`
+		Headers    map[string][]string `json:"Headers"`
+		Body       []byte              `json:"Body"`
+	}
+	if err := json.Unmarshal(env.Result, &resp); err != nil {
+		t.Fatalf("decode ManagementResponse = %v (%s)", err, env.Result)
+	}
+	return resp
 }
 
 func TestSaveRequiresManagementKey(t *testing.T) {
