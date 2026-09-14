@@ -7,7 +7,7 @@
       "description": "Reads account balance and quota from official LLM vendors (DeepSeek, Kimi/Moonshot) and New API / sub2api compatible relay gateways.",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
@@ -24,14 +24,14 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.3.0/api-balance_0.3.0_linux_amd64.zip",
-            "sha256": "aab013775f9924457a8ba1b9110289f3ee0dcbbb2fff104d6b3118eb660519a9"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.4.0/api-balance_0.4.0_linux_amd64.zip",
+            "sha256": "PENDING_CI"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.3.0/api-balance_0.3.0_linux_arm64.zip",
-            "sha256": "a63b727f5354a36a5882152bbc395b8c41c041f32e6505fe914243fa75666d28"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.4.0/api-balance_0.4.0_linux_arm64.zip",
+            "sha256": "PENDING_CI"
           }
         ]
       }

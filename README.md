@@ -192,6 +192,46 @@ plugins:
 该公式在站点开启或关闭"按货币显示"时都成立。适用于 one-api 及其衍生
 项目（new-api、one-hub、done-hub、Veloera、VoAPI 旧版等）。
 
+### 多厂商档案（profiles，一个插件实例管所有厂商）
+
+默认情况下整套配置对应一个厂商。如需用同一个插件实例同时查询 DeepSeek、
+one-api 系中转站、OpenRouter 等多个来源，使用 `profiles`：**键 = CPA 凭据的
+provider 名**（小写），值 = 该凭据使用的余额配置；键 `default` 兜底所有未
+匹配的凭据。
+
+```yaml
+plugins:
+  configs:
+    api-balance:
+      enabled: true
+      priority: 10
+      profiles:
+        deepseek:
+          vendor: deepseek
+        openrouter:
+          vendor: openrouter
+        relay-a:
+          vendor: one-api
+          base_url: "https://站点A域名"
+        relay-b:
+          vendor: custom
+          endpoint: "https://站点B域名/v1/usage"
+          balance_path: remaining
+          currency_path: unit
+```
+
+说明：
+
+- 档案内支持所有标量配置（`vendor`、`base_url`、`endpoint`、`used_endpoint`、
+  `used_scale`、各 JSON 路径、`credential_header`/`credential_prefix` 等），
+  厂商预设同样生效；
+- `headers`/`query`/`credential_paths` 暂只支持全局配置（对所有档案生效），
+  档案内写列表会报错提示；
+- CPA 宿主按凭据的 `provider` 字段路由：把凭据的 provider 设为对应档案名
+  （如 `relay-a`）；未匹配时先找 `default` 档案，再回退顶层配置，都没有则
+  报错；
+- 插件会在配置重载时把所有档案名动态声明为可服务的 provider，无需重启。
+
 ## CPA 配置（高级/自定义站点）
 
 自定义中转站或任何返回 JSON 的余额接口，使用 `vendor: custom`（默认）：

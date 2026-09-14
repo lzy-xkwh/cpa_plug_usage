@@ -63,6 +63,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -108,6 +109,10 @@ type config struct {
 	PlanPath          string            `yaml:"plan_path"`
 	ResetPath         string            `yaml:"reset_path"`
 	WindowName        string            `yaml:"window_name"`
+	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
+	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
+	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
+	Profiles map[string]config `yaml:"profiles"`
 }
 
 // vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
@@ -317,7 +322,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]string{"identifier": providerID}), nil
 	case "quota.describe":
 		return okEnvelope(quotaDescribeResponse{
-			SupportedProviders: []string{providerID, "deepseek", "moonshot", "third-party-balance"},
+			SupportedProviders: supportedProviders(),
 			DisplayName:        "API 余额查询",
 			SupportsReset:      false,
 		}), nil
@@ -346,7 +351,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.3.0",
+			Version:          "0.4.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -369,6 +374,7 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "reset_path", Type: "string", Description: "可选，响应 JSON 中重置时间所在路径。"},
 				{Name: "window_name", Type: "string", Description: "标准化额度窗口的显示名称。"},
 				{Name: "allow_insecure_http", Type: "boolean", Description: "是否允许 HTTP 接口；仅在服务可信且本地内网时开启。"},
+				{Name: "profiles", Type: "string", Description: "高级：多厂商档案映射，键为 CPA 凭据的 provider 名，值为一组余额配置；详见 README。仅 YAML 配置可用。"},
 			},
 		},
 		Capabilities: map[string]bool{"quota_provider": true},
@@ -382,43 +388,76 @@ func applyConfig(raw []byte) error {
 			return fmt.Errorf("解析插件配置失败: %w", err)
 		}
 	}
+	if err := applyVendorPreset(&next); err != nil {
+		return err
+	}
+	if err := normalizeDefaults(&next); err != nil {
+		return err
+	}
+	if len(next.Profiles) > 0 {
+		resolved := make(map[string]config, len(next.Profiles))
+		for name, profile := range next.Profiles {
+			if err := applyVendorPreset(&profile); err != nil {
+				return fmt.Errorf("档案 %q: %w", name, err)
+			}
+			if err := normalizeDefaults(&profile); err != nil {
+				return fmt.Errorf("档案 %q: %w", name, err)
+			}
+			resolved[name] = profile
+		}
+		next.Profiles = resolved
+	}
+	configMu.Lock()
+	runtimeConfig = next
+	configMu.Unlock()
+	return nil
+}
+
+// applyVendorPreset 依据 vendor 字段填补未显式配置的接口与路径。
+func applyVendorPreset(next *config) error {
 	vendor := strings.ToLower(strings.TrimSpace(next.Vendor))
 	if vendor == "" {
 		vendor = "custom"
 	}
-	if vendor != "custom" {
-		preset, ok := vendorPresets[vendor]
-		if !ok {
-			return fmt.Errorf("不支持的 vendor %q，可选值: %s", next.Vendor, strings.Join(vendorNames, ", "))
-		}
-		if next.Endpoint == "" {
-			next.Endpoint = preset.Endpoint
-		}
-		if next.UsedEndpoint == "" {
-			next.UsedEndpoint = preset.UsedEndpoint
-		}
-		if preset.UsedScale != 0 && next.UsedScale == 0 {
-			next.UsedScale = preset.UsedScale
-		}
-		if next.BalancePath == "" {
-			next.BalancePath = preset.BalancePath
-		}
-		if next.UsedPath == "" {
-			next.UsedPath = preset.UsedPath
-		}
-		if next.LimitPath == "" {
-			next.LimitPath = preset.LimitPath
-		}
-		if next.CurrencyPath == "" {
-			next.CurrencyPath = preset.CurrencyPath
-		}
-		if next.PlanPath == "" {
-			next.PlanPath = preset.PlanPath
-		}
-		if next.WindowName == "" {
-			next.WindowName = preset.WindowName
-		}
+	if vendor == "custom" {
+		return nil
 	}
+	preset, ok := vendorPresets[vendor]
+	if !ok {
+		return fmt.Errorf("不支持的 vendor %q，可选值: %s", next.Vendor, strings.Join(vendorNames, ", "))
+	}
+	if next.Endpoint == "" {
+		next.Endpoint = preset.Endpoint
+	}
+	if next.UsedEndpoint == "" {
+		next.UsedEndpoint = preset.UsedEndpoint
+	}
+	if preset.UsedScale != 0 && next.UsedScale == 0 {
+		next.UsedScale = preset.UsedScale
+	}
+	if next.BalancePath == "" {
+		next.BalancePath = preset.BalancePath
+	}
+	if next.UsedPath == "" {
+		next.UsedPath = preset.UsedPath
+	}
+	if next.LimitPath == "" {
+		next.LimitPath = preset.LimitPath
+	}
+	if next.CurrencyPath == "" {
+		next.CurrencyPath = preset.CurrencyPath
+	}
+	if next.PlanPath == "" {
+		next.PlanPath = preset.PlanPath
+	}
+	if next.WindowName == "" {
+		next.WindowName = preset.WindowName
+	}
+	return nil
+}
+
+// normalizeDefaults 填补通用默认值并做静态校验。
+func normalizeDefaults(next *config) error {
 	if next.Method == "" {
 		next.Method = http.MethodGet
 	}
@@ -439,7 +478,7 @@ func applyConfig(raw []byte) error {
 		next.UsedScale = 1
 	}
 	if next.WindowName == "" {
-		next.WindowName = "balance"
+		next.WindowName = "余额"
 	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
@@ -450,10 +489,53 @@ func applyConfig(raw []byte) error {
 			return err
 		}
 	}
-	configMu.Lock()
-	runtimeConfig = next
-	configMu.Unlock()
 	return nil
+}
+
+// resolveProfile 按 CPA 凭据的 provider 名选择余额档案。
+func resolveProfile(cfg config, provider string) (config, error) {
+	if len(cfg.Profiles) == 0 {
+		return cfg, nil
+	}
+	name := strings.ToLower(strings.TrimSpace(provider))
+	if name != "" {
+		if profile, ok := cfg.Profiles[name]; ok {
+			return profile, nil
+		}
+	}
+	if profile, ok := cfg.Profiles["default"]; ok {
+		return profile, nil
+	}
+	// 向后兼容：定义了 profiles 但顶层仍有显式 vendor/endpoint 时，
+	// 未匹配的凭据回退到顶层配置。
+	if cfg.Vendor != "" || cfg.Endpoint != "" {
+		return cfg, nil
+	}
+	return config{}, fmt.Errorf("凭据 provider %q 没有匹配的余额档案，请在 profiles 中添加 %q 或 default", provider, name)
+}
+
+// supportedProviders 声明本插件可服务的凭据 provider 集合，
+// 包含内置厂商名与用户定义的档案名，供 CPA 宿主路由 quota.fetch。
+func supportedProviders() []string {
+	set := map[string]struct{}{
+		providerID:            {},
+		"third-party-balance": {},
+	}
+	for _, vendor := range vendorNames {
+		set[vendor] = struct{}{}
+	}
+	cfg := currentConfig()
+	for name := range cfg.Profiles {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // decodeConfig accepts JSON and the flat/nested YAML subset emitted by CPA's
@@ -470,6 +552,7 @@ func decodeConfig(raw []byte, out *config) error {
 
 	scanner := bufio.NewScanner(bytes.NewReader(trimmed))
 	section := ""
+	profileName := ""
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
@@ -480,6 +563,9 @@ func decodeConfig(raw []byte, out *config) error {
 		indent := len(line) - len(strings.TrimLeft(line, " "))
 		content := strings.TrimSpace(line)
 		if strings.HasPrefix(content, "- ") {
+			if section == "profiles" {
+				return fmt.Errorf("第 %d 行: 档案内暂不支持列表写法，credential_paths 请使用逗号分隔", lineNumber)
+			}
 			if section != "credential_paths" {
 				// CPA may pass store metadata containing lists such as
 				// artifact URLs. Unknown host-managed sections are ignored.
@@ -496,6 +582,7 @@ func decodeConfig(raw []byte, out *config) error {
 		value = strings.TrimSpace(stripComment(value))
 		if indent == 0 {
 			section = ""
+			profileName = ""
 			if value == "" {
 				section = key
 				continue
@@ -503,6 +590,28 @@ func decodeConfig(raw []byte, out *config) error {
 			if err := setConfigScalar(out, key, parseScalar(value)); err != nil {
 				return fmt.Errorf("第 %d 行: %w", lineNumber, err)
 			}
+			continue
+		}
+		if section == "profiles" {
+			if value == "" {
+				if key == "headers" || key == "query" || key == "credential_paths" {
+					return fmt.Errorf("第 %d 行: 档案内暂不支持 %s 子表，请使用全局配置", lineNumber, key)
+				}
+				profileName = strings.ToLower(key)
+				if out.Profiles == nil {
+					out.Profiles = make(map[string]config)
+				}
+				out.Profiles[profileName] = config{}
+				continue
+			}
+			if profileName == "" {
+				return fmt.Errorf("第 %d 行: 档案字段缺少所属档案名", lineNumber)
+			}
+			profile := out.Profiles[profileName]
+			if err := setConfigScalar(&profile, key, parseScalar(value)); err != nil {
+				return fmt.Errorf("第 %d 行: %w", lineNumber, err)
+			}
+			out.Profiles[profileName] = profile
 			continue
 		}
 		if section != "headers" && section != "query" {
@@ -647,25 +756,29 @@ func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
 	if !cfg.Enabled {
 		return quotaFetchResponse{}, errors.New("插件未启用，请在配置中设置 enabled: true")
 	}
-	if cfg.Endpoint == "" {
+	profile, err := resolveProfile(cfg, req.Provider)
+	if err != nil {
+		return quotaFetchResponse{}, err
+	}
+	if profile.Endpoint == "" {
 		return quotaFetchResponse{}, errors.New("未配置 endpoint（余额接口地址）")
 	}
-	if cfg.BalancePath == "" && (cfg.LimitPath == "" || cfg.UsedPath == "") {
+	if profile.BalancePath == "" && (profile.LimitPath == "" || profile.UsedPath == "") {
 		return quotaFetchResponse{}, errors.New("未配置 balance_path，且缺少 limit_path + used_path 组合（无法推导余额）")
 	}
-	document, err := fetchBalanceDocument(cfg.Endpoint, cfg, req, true)
+	document, err := fetchBalanceDocument(profile.Endpoint, profile, req, true)
 	if err != nil {
 		return quotaFetchResponse{}, err
 	}
 	usedDocument := document
 	hasUsedDocument := false
-	if cfg.UsedEndpoint != "" {
-		if second, err := fetchBalanceDocument(cfg.UsedEndpoint, cfg, req, false); err == nil {
+	if profile.UsedEndpoint != "" {
+		if second, err := fetchBalanceDocument(profile.UsedEndpoint, profile, req, false); err == nil {
 			usedDocument = second
 			hasUsedDocument = true
 		}
 	}
-	return normalizeQuota(document, usedDocument, hasUsedDocument, cfg)
+	return normalizeQuota(document, usedDocument, hasUsedDocument, profile)
 }
 
 // fetchBalanceDocument 请求一个余额相关端点并解析为 JSON 文档。

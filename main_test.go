@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -188,5 +189,105 @@ func TestFindCredentialDoesNotReturnMalformedJSON(t *testing.T) {
 	raw, _ := json.Marshal(document)
 	if got := findCredential(raw, []string{"access_token"}); got != "secret" {
 		t.Fatalf("findCredential() = %q, want secret", got)
+	}
+}
+
+func TestDecodeConfigProfiles(t *testing.T) {
+	var got config
+	err := decodeConfig([]byte(`
+enabled: true
+profiles:
+  deepseek:
+    vendor: deepseek
+  relay-a:
+    vendor: one-api
+    base_url: https://relay.example.com
+`), &got)
+	if err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if len(got.Profiles) != 2 {
+		t.Fatalf("profiles = %#v", got.Profiles)
+	}
+	if got.Profiles["deepseek"].Vendor != "deepseek" {
+		t.Fatalf("deepseek profile vendor = %q", got.Profiles["deepseek"].Vendor)
+	}
+	if got.Profiles["relay-a"].BaseURL != "https://relay.example.com" {
+		t.Fatalf("relay-a base_url = %q", got.Profiles["relay-a"].BaseURL)
+	}
+}
+
+func TestApplyConfigResolvesProfiles(t *testing.T) {
+	if err := applyConfig([]byte(`
+enabled: true
+profiles:
+  deepseek:
+    vendor: deepseek
+  relay-a:
+    vendor: one-api
+    base_url: https://relay.example.com
+`)); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	got := currentConfig()
+	if got.Profiles["deepseek"].Endpoint != "https://api.deepseek.com/user/balance" {
+		t.Fatalf("deepseek endpoint = %q", got.Profiles["deepseek"].Endpoint)
+	}
+	if got.Profiles["relay-a"].UsedScale != 0.01 || got.Profiles["relay-a"].UsedEndpoint == "" {
+		t.Fatalf("relay-a preset fields = scale %v used %q", got.Profiles["relay-a"].UsedScale, got.Profiles["relay-a"].UsedEndpoint)
+	}
+}
+
+func TestResolveProfileRouting(t *testing.T) {
+	cfg := config{
+		Profiles: map[string]config{
+			"deepseek": {Vendor: "deepseek", Endpoint: "https://api.deepseek.com/user/balance"},
+			"default":  {Vendor: "custom", Endpoint: "https://fallback.example.com/x"},
+		},
+	}
+	if p, err := resolveProfile(cfg, "DeepSeek"); err != nil || p.Endpoint != "https://api.deepseek.com/user/balance" {
+		t.Fatalf("exact match = %#v, %v", p, err)
+	}
+	if p, err := resolveProfile(cfg, "unknown-relay"); err != nil || p.Endpoint != "https://fallback.example.com/x" {
+		t.Fatalf("default fallback = %#v, %v", p, err)
+	}
+	legacy := config{Vendor: "one-api", Endpoint: "{base_url}/v1/dashboard/billing/subscription"}
+	if p, err := resolveProfile(legacy, "anything"); err != nil || p.Endpoint != legacy.Endpoint {
+		t.Fatalf("legacy fallback = %#v, %v", p, err)
+	}
+	empty := config{Profiles: map[string]config{"deepseek": {Vendor: "deepseek"}}}
+	if _, err := resolveProfile(empty, "nope"); err == nil {
+		t.Fatalf("resolveProfile() should error without match/default/legacy source")
+	}
+}
+
+func TestDescribeIncludesProfileNames(t *testing.T) {
+	if err := applyConfig([]byte(`
+enabled: true
+profiles:
+  relay-a:
+    vendor: one-api
+    base_url: https://relay.example.com
+`)); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	raw, err := handleMethod("quota.describe", nil)
+	if err != nil {
+		t.Fatalf("handleMethod() error = %v", err)
+	}
+	var env struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			SupportedProviders []string `json:"supported_providers"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.OK {
+		t.Fatalf("describe envelope = %s (%v)", raw, err)
+	}
+	joined := strings.Join(env.Result.SupportedProviders, ",")
+	for _, want := range []string{"api-balance", "deepseek", "moonshot", "one-api", "openrouter", "relay-a"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("supported providers %q missing %q", joined, want)
+		}
 	}
 }
