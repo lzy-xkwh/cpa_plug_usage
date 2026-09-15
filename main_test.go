@@ -725,6 +725,18 @@ func TestRegistrationMetadata(t *testing.T) {
 	}
 }
 
+// 管理密钥填错后必须始终能重填：向导页要有重设入口，
+// 且已配置密钥但被 CPA 拒绝（401/403）时前端能自动展开重填卡片。
+func TestWizardAllowsManagementKeyReset(t *testing.T) {
+	page := configWizardPage()
+	if !strings.Contains(page, "重设管理密钥") {
+		t.Fatal("wizard page must offer a management key reset entry")
+	}
+	if !strings.Contains(page, "showKeySetup") || !strings.Contains(page, "HTTP 40[13]") {
+		t.Fatal("wizard page must auto-reveal key setup on 401/403")
+	}
+}
+
 func TestURLValidationRejectsCredentialInjection(t *testing.T) {
 	for _, endpoint := range []string{
 		"https://user:password@example.com/balance",

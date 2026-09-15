@@ -397,7 +397,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.3",
+			Version:          "0.7.4",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1858,8 +1858,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 
 <div class="card" id="setupCard" style="display:none">
-<h2>首次使用：保存 CPA 管理密钥</h2>
-<div class="tip">粘贴一次 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。密钥只保存在本插件的配置里，不会显示在页面上。</div>
+<h2>设置 / 重设 CPA 管理密钥</h2>
+<div class="tip">粘贴 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。</div>
 <div class="row" style="margin-top:8px">
   <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management key）"></div>
   <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
@@ -1867,7 +1867,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 
 <div class="card">
-<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="loadData()">刷新</button></h2>
+<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="loadData()">刷新</button><button class="btn" style="float:right;margin-right:6px" onclick="showKeySetup()">重设管理密钥</button></h2>
 <table><thead><tr><th style="width:26%">供应商</th><th style="width:22%">状态</th><th>说明</th><th style="width:70px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table>
 <div class="tip" id="provNote"></div>
@@ -1904,8 +1904,14 @@ var PRESETS = {
 var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
 var DATA = null;
 var selected = {};
+var keySetupOpened = false;
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
+function showKeySetup(){
+  keySetupOpened = true;
+  document.getElementById("setupCard").style.display = "block";
+  document.getElementById("mgmtkey").focus();
+}
 function fetchTimeout(url, opts, ms){
   opts = opts || {};
   opts.signal = AbortSignal.timeout ? AbortSignal.timeout(ms || 10000) : undefined;
@@ -1923,7 +1929,12 @@ function loadData(){
   }).then(function(d){
     if (!d) return;
     DATA = d;
-    document.getElementById("setupCard").style.display = d.management_configured ? "none" : "block";
+    var note = d.providers_note || "";
+    if (d.management_configured && /HTTP 40[13]/.test(note)) {
+      // 密钥已保存但被 CPA 拒绝：自动展开重填入口。
+      keySetupOpened = true;
+    }
+    document.getElementById("setupCard").style.display = (!d.management_configured || keySetupOpened) ? "block" : "none";
     renderProviders(d);
     renderForms();
   }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); });
