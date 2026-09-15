@@ -117,6 +117,40 @@ GitHub Release 后，插件商店可以直接更新，不需要再次手动复�
 当前发布工作流提供 Linux `amd64` 和 `arm64` 两种 Docker 常用架构；其他
 平台可以按 `.github/workflows/release.yml` 扩展。
 
+## 故障排查：商店安装/更新返回 502
+
+CPA 商店安装端点（`POST /v0/management/plugin-store/:id/install`）在三种
+情况下返回 502，可通过响应 body 的 `error` 字段区分：
+
+| error | 含义 | 处理 |
+|---|---|---|
+| `plugin_store_registry_failed` | CPA 拉取 store-source 的 registry.json 失败 | 检查服务器到 `raw.githubusercontent.com` 的连通性；或换下面的镜像源 |
+| `plugin_manifest_invalid` | 清单校验失败 | 保留完整 message 反馈到仓库 issue |
+| `plugin_install_failed` | 下载 release zip / sha256 校验 / 解压失败 | 重试一次；反复失败时检查 `objects.githubusercontent.com` 连通性与代理配置 |
+
+日志形如 `502 ... POST "/v0/management/plugin-store/api-balance/install?source=..."`
+只记录状态码，真实原因在响应 body 里。可在 CPA 服务器本机执行：
+
+```bash
+curl -s -X POST "http://127.0.0.1:8317/v0/management/plugin-store/api-balance/install?source=<source-id>" \
+  -H "Authorization: Bearer <管理密钥>"
+```
+
+`source-id` 是 store source URL 的哈希前缀（日志里已有，如 `source-ff7d…`）。
+
+如果服务器到 GitHub 的链路不稳定，可以在 `config.yaml` 里把 registry
+换成 jsDelivr CDN 镜像（有最长约 12 小时缓存，新版本发布后可能延迟可见）：
+
+```yaml
+plugins:
+  store-sources:
+    - "https://cdn.jsdelivr.net/gh/lzy-xkwh/cpa_plug_usage@main/registry.json"
+```
+
+注：镜像只能加速 registry.json 的拉取；release zip 仍从 GitHub 下载。
+下载环节持续失败时，可手动安装：从 Releases 页下载对应架构的 zip，
+解压出 `api-balance.so` 放入 CPA 插件目录后重启。
+
 ## 官方厂商预设
 
 凭据默认会按 `Authorization: Bearer <API Key>` 发送（CPA storage_json 中的
