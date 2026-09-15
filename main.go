@@ -61,6 +61,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -87,36 +88,36 @@ type envelope struct {
 }
 
 type config struct {
-	Enabled           bool              `yaml:"enabled"`
-	Priority          int               `yaml:"priority"`
-	Vendor            string            `yaml:"vendor"`
-	BaseURL           string            `yaml:"base_url"`
-	Endpoint          string            `yaml:"endpoint"`
-	UsedEndpoint      string            `yaml:"used_endpoint"`
-	Method            string            `yaml:"method"`
-	UsedScale         float64           `yaml:"used_scale"`
-	Headers           map[string]string `yaml:"headers"`
-	Query             map[string]string `yaml:"query"`
-	CredentialPaths   []string          `yaml:"credential_paths"`
-	CredentialHeader  string            `yaml:"credential_header"`
-	CredentialPrefix  string            `yaml:"credential_prefix"`
-	AllowInsecureHTTP bool              `yaml:"allow_insecure_http"`
-	TimeoutSeconds    int               `yaml:"timeout_seconds"`
+	Enabled           bool              `yaml:"enabled" json:"enabled"`
+	Priority          int               `yaml:"priority" json:"priority"`
+	Vendor            string            `yaml:"vendor" json:"vendor"`
+	BaseURL           string            `yaml:"base_url" json:"base_url"`
+	Endpoint          string            `yaml:"endpoint" json:"endpoint"`
+	UsedEndpoint      string            `yaml:"used_endpoint" json:"used_endpoint"`
+	Method            string            `yaml:"method" json:"method"`
+	UsedScale         float64           `yaml:"used_scale" json:"used_scale"`
+	Headers           map[string]string `yaml:"headers" json:"headers"`
+	Query             map[string]string `yaml:"query" json:"query"`
+	CredentialPaths   []string          `yaml:"credential_paths" json:"credential_paths"`
+	CredentialHeader  string            `yaml:"credential_header" json:"credential_header"`
+	CredentialPrefix  string            `yaml:"credential_prefix" json:"credential_prefix"`
+	AllowInsecureHTTP bool              `yaml:"allow_insecure_http" json:"allow_insecure_http"`
+	TimeoutSeconds    int               `yaml:"timeout_seconds" json:"timeout_seconds"`
 	// ManagementKey / ManagementURL 供配置向导在服务端调用 CPA 管理 API：
 	// 自动列出已配置供应商、保存配置。仅保存在插件配置里，不回传给页面。
-	ManagementKey string `yaml:"management_key"`
-	ManagementURL string `yaml:"management_url"`
-	BalancePath   string `yaml:"balance_path"`
-	UsedPath      string `yaml:"used_path"`
-	LimitPath     string `yaml:"limit_path"`
-	CurrencyPath  string `yaml:"currency_path"`
-	PlanPath      string `yaml:"plan_path"`
-	ResetPath     string `yaml:"reset_path"`
-	WindowName    string `yaml:"window_name"`
+	ManagementKey string `yaml:"management_key" json:"management_key"`
+	ManagementURL string `yaml:"management_url" json:"management_url"`
+	BalancePath   string `yaml:"balance_path" json:"balance_path"`
+	UsedPath      string `yaml:"used_path" json:"used_path"`
+	LimitPath     string `yaml:"limit_path" json:"limit_path"`
+	CurrencyPath  string `yaml:"currency_path" json:"currency_path"`
+	PlanPath      string `yaml:"plan_path" json:"plan_path"`
+	ResetPath     string `yaml:"reset_path" json:"reset_path"`
+	WindowName    string `yaml:"window_name" json:"window_name"`
 	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
 	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
 	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
-	Profiles map[string]config `yaml:"profiles"`
+	Profiles map[string]config `yaml:"profiles" json:"profiles"`
 }
 
 // vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
@@ -442,6 +443,16 @@ func applyConfig(raw []byte) error {
 	if len(next.Profiles) > 0 {
 		resolved := make(map[string]config, len(next.Profiles))
 		for name, profile := range next.Profiles {
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name == "" {
+				return errors.New("profiles 不能包含空档案名")
+			}
+			if _, exists := resolved[name]; exists {
+				return fmt.Errorf("profiles 包含重复档案名 %q（大小写不应不同）", name)
+			}
+			// headers/query/credential_paths 是全局请求设置；档案只覆盖
+			// 自身的余额字段，避免多供应商配置后认证设置意外丢失。
+			profile = inheritGlobalRequestConfig(next, profile)
 			if err := applyVendorPreset(&profile); err != nil {
 				return fmt.Errorf("档案 %q: %w", name, err)
 			}
@@ -452,10 +463,42 @@ func applyConfig(raw []byte) error {
 		}
 		next.Profiles = resolved
 	}
+	clearStrategyCache()
 	configMu.Lock()
 	runtimeConfig = next
 	configMu.Unlock()
 	return nil
+}
+
+func inheritGlobalRequestConfig(base, profile config) config {
+	if profile.Headers == nil {
+		profile.Headers = cloneStringMap(base.Headers)
+	}
+	if profile.Query == nil {
+		profile.Query = cloneStringMap(base.Query)
+	}
+	if len(profile.CredentialPaths) == 0 {
+		profile.CredentialPaths = append([]string(nil), base.CredentialPaths...)
+	}
+	return profile
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func clearStrategyCache() {
+	strategyCache.Range(func(key, _ any) bool {
+		strategyCache.Delete(key)
+		return true
+	})
 }
 
 // applyVendorPreset 依据 vendor 字段填补未显式配置的接口与路径。
@@ -464,6 +507,7 @@ func applyVendorPreset(next *config) error {
 	if vendor == "" {
 		vendor = "custom"
 	}
+	next.Vendor = vendor
 	if vendor == "custom" {
 		return nil
 	}
@@ -528,6 +572,13 @@ func normalizeDefaults(next *config) error {
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
 	}
+	if next.ManagementURL != "" {
+		parsed, err := validateManagementURL(next.ManagementURL)
+		if err != nil {
+			return err
+		}
+		next.ManagementURL = strings.TrimRight(parsed.String(), "/")
+	}
 	// 含 {base_url} 等占位符的地址在运行时展开后再校验。
 	if next.Endpoint != "" && !strings.Contains(next.Endpoint, "{") {
 		if _, err := validateEndpoint(next.Endpoint, next.AllowInsecureHTTP); err != nil {
@@ -545,11 +596,11 @@ func resolveProfile(cfg config, provider string) (config, error) {
 	name := strings.ToLower(strings.TrimSpace(provider))
 	if name != "" {
 		if profile, ok := cfg.Profiles[name]; ok {
-			return profile, nil
+			return inheritGlobalRequestConfig(cfg, profile), nil
 		}
 	}
 	if profile, ok := cfg.Profiles["default"]; ok {
-		return profile, nil
+		return inheritGlobalRequestConfig(cfg, profile), nil
 	}
 	// 向后兼容：定义了 profiles 但顶层仍有显式 vendor/endpoint 时，
 	// 未匹配的凭据回退到顶层配置。
@@ -867,7 +918,9 @@ func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchRe
 			}
 			profile.BaseURL = baseURL
 		}
-		normalizeDefaults(&profile)
+		if err := normalizeDefaults(&profile); err != nil {
+			return config{}, nil, err
+		}
 		return profile, nil, nil
 	}
 
@@ -883,7 +936,9 @@ func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchRe
 		if err := applyVendorPreset(&profile); err != nil {
 			return config{}, nil, err
 		}
-		normalizeDefaults(&profile)
+		if err := normalizeDefaults(&profile); err != nil {
+			return config{}, nil, err
+		}
 		return profile, nil, nil
 	}
 
@@ -951,15 +1006,28 @@ func discoverBaseURL(cfg *config, req quotaFetchRequest) string {
 	return ""
 }
 
-// vendorByHost 依据站点域名特征识别厂商。
+// vendorByHost 依据站点域名特征识别厂商。只匹配主机名，避免把
+// evil-deepseek.example 等无关域名误判为官方厂商。
 func vendorByHost(baseURL string) string {
-	host := strings.ToLower(baseURL)
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	matches := func(domains ...string) bool {
+		for _, domain := range domains {
+			if host == domain || strings.HasSuffix(host, "."+domain) {
+				return true
+			}
+		}
+		return false
+	}
 	switch {
-	case strings.Contains(host, "deepseek"):
+	case matches("deepseek.com"):
 		return "deepseek"
-	case strings.Contains(host, "moonshot"):
+	case matches("moonshot.cn", "moonshot.ai", "kimi.com"):
 		return "moonshot"
-	case strings.Contains(host, "openrouter"):
+	case matches("openrouter.ai"):
 		return "openrouter"
 	default:
 		return ""
@@ -1073,6 +1141,10 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 	return resp, nil
 }
 
+// hostCallMethod 是宿主回调的测试接缝：生产环境始终是 callHostMethod，
+// 测试可替换以模拟宿主的 HTTP/日志行为。
+var hostCallMethod = callHostMethod
+
 // callHostMethod 调用宿主回调 RPC（host.http.do / host.log 等）并解包结果。
 func callHostMethod(hostMethod string, payload []byte) ([]byte, error) {
 	cMethod := C.CString(hostMethod)
@@ -1118,7 +1190,7 @@ func callHostHTTP(request httpRequest) (httpResponse, error) {
 	if err != nil {
 		return httpResponse{}, fmt.Errorf("编码宿主 HTTP 请求失败: %w", err)
 	}
-	raw, err := callHostMethod("host.http.do", payload)
+	raw, err := hostCallMethod("host.http.do", payload)
 	if err != nil {
 		return httpResponse{}, err
 	}
@@ -1236,11 +1308,25 @@ func expandTemplate(value string, req quotaFetchRequest) string {
 
 func validateEndpoint(endpoint string, allowInsecure bool) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(endpoint))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Hostname() == "" {
 		return nil, fmt.Errorf("endpoint 必须是完整的绝对 URL")
+	}
+	if parsed.User != nil || parsed.Fragment != "" {
+		return nil, errors.New("endpoint 不得包含用户信息或 fragment")
 	}
 	if parsed.Scheme != "https" && !(allowInsecure && parsed.Scheme == "http") {
 		return nil, errors.New("endpoint 必须使用 https，除非 allow_insecure_http 为 true")
+	}
+	return parsed, nil
+}
+
+func validateManagementURL(raw string) (*url.URL, error) {
+	parsed, err := validateEndpoint(raw, true)
+	if err != nil {
+		return nil, fmt.Errorf("management_url 无效: %w", err)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return nil, errors.New("management_url 不应包含资源路径")
 	}
 	return parsed, nil
 }
@@ -1317,17 +1403,9 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 	}
 	switch req.Method {
 	case http.MethodGet, "":
-		return okEnvelope(map[string]any{
-			"StatusCode": 200,
-			"Headers":    map[string][]string{"Content-Type": {"text/html; charset=utf-8"}},
-			"Body":       []byte(configWizardPage()),
-		}), nil
+		return okEnvelope(managementTextResponse(http.StatusOK, "text/html; charset=utf-8", []byte(configWizardPage()))), nil
 	default:
-		return okEnvelope(map[string]any{
-			"StatusCode": 405,
-			"Headers":    map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}},
-			"Body":       []byte("本向导仅支持 GET 请求"),
-		}), nil
+		return okEnvelope(managementTextResponse(http.StatusMethodNotAllowed, "text/plain; charset=utf-8", []byte("本页面仅支持 GET 请求"))), nil
 	}
 }
 
@@ -1335,12 +1413,25 @@ func configWizardPage() string {
 	return wizardHTML
 }
 
-// managementJSONResponse 把 JSON 载荷包装成宿主期待的 ManagementResponse。
-func managementJSONResponse(payload []byte) map[string]any {
-	return map[string]any{
-		"StatusCode": 200,
-		"Headers":    map[string][]string{"Content-Type": {"application/json; charset=utf-8"}},
-		"Body":       payload,
+type managementResponse struct {
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers"`
+	Body       []byte              `json:"Body"`
+}
+
+func managementJSONResponse(payload []byte) managementResponse {
+	return managementResponse{
+		StatusCode: 200,
+		Headers:    map[string][]string{"Content-Type": {"application/json; charset=utf-8"}},
+		Body:       payload,
+	}
+}
+
+func managementTextResponse(status int, contentType string, payload []byte) managementResponse {
+	return managementResponse{
+		StatusCode: status,
+		Headers:    map[string][]string{"Content-Type": {contentType}},
+		Body:       payload,
 	}
 }
 
@@ -1524,8 +1615,163 @@ func discoverProviders(cfg config) ([]providerStatus, string) {
 	return result, ""
 }
 
-// saveConfigViaManagementAPI 接收向导页提交的配置（JSON），白名单过滤后
-// 通过 CPA 管理 API PUT /plugins/api-balance/config 保存并触发热加载。
+// wizardTopLevelKeys 允许向导提交的顶层字段：控制字段 + 余额标量字段
+// （向导在仅配置 default 档案时会把档案字段提升到顶层提交）。
+// 密钥、认证头、凭据路径、管理地址与 allow_insecure_http 始终拒绝。
+var wizardTopLevelKeys = map[string]struct{}{
+	"enabled":       {},
+	"priority":      {},
+	"profiles":      {},
+	"vendor":        {},
+	"base_url":      {},
+	"endpoint":      {},
+	"used_endpoint": {},
+	"used_scale":    {},
+	"method":        {},
+	"balance_path":  {},
+	"used_path":     {},
+	"limit_path":    {},
+	"currency_path": {},
+	"plan_path":     {},
+	"reset_path":    {},
+	"window_name":   {},
+}
+
+var wizardProfileKeys = map[string]struct{}{
+	"vendor":        {},
+	"base_url":      {},
+	"endpoint":      {},
+	"used_endpoint": {},
+	"used_scale":    {},
+	"balance_path":  {},
+	"used_path":     {},
+	"limit_path":    {},
+	"currency_path": {},
+	"plan_path":     {},
+	"reset_path":    {},
+	"window_name":   {},
+}
+
+// validateWizardConfig 只允许向导编辑启用状态、优先级和余额 profiles。
+// 管理密钥、认证请求头、凭据路径及管理地址必须留在服务端插件配置中。
+func validateWizardConfig(saveJSON string) (map[string]any, error) {
+	var incoming map[string]json.RawMessage
+	decoder := json.NewDecoder(strings.NewReader(saveJSON))
+	if err := decoder.Decode(&incoming); err != nil {
+		return nil, fmt.Errorf("配置数据解析失败: %w", err)
+	}
+	if incoming == nil {
+		return nil, errors.New("配置数据必须是 JSON 对象")
+	}
+	clean := make(map[string]any, len(incoming))
+	for key, raw := range incoming {
+		if _, ok := wizardTopLevelKeys[key]; !ok {
+			return nil, fmt.Errorf("出于安全考虑，向导不允许提交 %s，请在插件配置 YAML 中手动维护", key)
+		}
+		switch key {
+		case "enabled":
+			var value bool
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, errors.New("enabled 必须是布尔值")
+			}
+			clean[key] = value
+		case "priority":
+			var value int
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, errors.New("priority 必须是整数")
+			}
+			clean[key] = value
+		case "used_scale":
+			var value float64
+			if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+				return nil, errors.New("used_scale 必须是正数")
+			}
+			clean[key] = value
+		case "method":
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, errors.New("method 必须是字符串")
+			}
+			value = strings.ToUpper(strings.TrimSpace(value))
+			if value != http.MethodGet && value != http.MethodPost {
+				return nil, errors.New("method 仅支持 GET 或 POST")
+			}
+			clean[key] = value
+		case "profiles":
+			profiles, err := validateWizardProfiles(raw)
+			if err != nil {
+				return nil, err
+			}
+			clean[key] = profiles
+		default:
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s 必须是字符串", key)
+			}
+			clean[key] = value
+		}
+	}
+	return clean, nil
+}
+
+func validateWizardProfiles(raw json.RawMessage) (map[string]any, error) {
+	var profiles map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &profiles); err != nil || profiles == nil {
+		return nil, errors.New("profiles 必须是 JSON 对象")
+	}
+	clean := make(map[string]any, len(profiles))
+	for name, rawProfile := range profiles {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			return nil, errors.New("profiles 不能包含空档案名")
+		}
+		var profile map[string]json.RawMessage
+		if err := json.Unmarshal(rawProfile, &profile); err != nil || profile == nil {
+			return nil, fmt.Errorf("档案 %q 必须是 JSON 对象", name)
+		}
+		cleanProfile := make(map[string]any, len(profile))
+		for key, rawValue := range profile {
+			if _, ok := wizardProfileKeys[key]; !ok {
+				return nil, fmt.Errorf("档案 %q 包含不支持的字段 %s", name, key)
+			}
+			if key == "used_scale" {
+				var value float64
+				if err := json.Unmarshal(rawValue, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+					return nil, fmt.Errorf("档案 %q 的 used_scale 必须是正数", name)
+				}
+				cleanProfile[key] = value
+				continue
+			}
+			var value string
+			if err := json.Unmarshal(rawValue, &value); err != nil {
+				return nil, fmt.Errorf("档案 %q 的 %s 必须是字符串", name, key)
+			}
+			cleanProfile[key] = value
+		}
+		clean[name] = cleanProfile
+	}
+	return clean, nil
+}
+
+// mergeWizardConfig 保留插件现有的认证、管理密钥和全局请求设置，
+// 再叠加向导允许修改的字段，避免 PUT 替换配置时丢失关键运行配置。
+func mergeWizardConfig(cfg config, clean map[string]any) (map[string]any, error) {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("编码现有配置失败: %w", err)
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return nil, fmt.Errorf("解析现有配置失败: %w", err)
+	}
+	for key, value := range clean {
+		merged[key] = value
+	}
+	return merged, nil
+}
+
+// saveConfigViaManagementAPI 接收向导页提交的配置（JSON），严格白名单过滤并
+// 与现有插件配置合并后，通过 CPA 管理 API PUT 保存并触发热加载。
 func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 	cfg := currentConfig()
 	if cfg.ManagementKey == "" {
@@ -1534,30 +1780,15 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 			"message": "请先在向导中粘贴一次 CPA 管理密钥并保存（会写入插件配置 management_key，之后不再询问）",
 		}
 	}
-	var incoming map[string]any
-	if err := json.Unmarshal([]byte(saveJSON), &incoming); err != nil {
-		return map[string]any{"ok": false, "message": "配置数据解析失败: " + err.Error()}
+	clean, err := validateWizardConfig(saveJSON)
+	if err != nil {
+		return map[string]any{"ok": false, "message": err.Error()}
 	}
-	clean := map[string]any{}
-	for key, value := range incoming {
-		switch key {
-		case "enabled", "priority", "profiles":
-			clean[key] = value
-		case "management_key", "headers", "query", "credential_paths":
-			return map[string]any{"ok": false, "message": "出于安全考虑，向导不允许提交 " + key + "，请在插件配置 YAML 中手动维护"}
-		default:
-			// 顶层其余标量字段同样接受（vendor/endpoint/路径等）。
-			clean[key] = value
-		}
+	merged, err := mergeWizardConfig(cfg, clean)
+	if err != nil {
+		return map[string]any{"ok": false, "message": err.Error()}
 	}
-	if profiles, ok := clean["profiles"].(map[string]any); ok {
-		fixed := map[string]any{}
-		for name, value := range profiles {
-			fixed[strings.ToLower(strings.TrimSpace(name))] = value
-		}
-		clean["profiles"] = fixed
-	}
-	payload, err := json.Marshal(clean)
+	payload, err := json.Marshal(merged)
 	if err != nil {
 		return map[string]any{"ok": false, "message": "配置编码失败: " + err.Error()}
 	}
@@ -1575,9 +1806,13 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 		return map[string]any{"ok": false, "message": "调用 CPA 管理 API 失败: " + err.Error()}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(response.Body))
+		if message == "" {
+			message = "管理 API 未返回错误详情"
+		}
 		return map[string]any{
 			"ok":      false,
-			"message": fmt.Sprintf("保存失败（HTTP %d）：%s", response.StatusCode, strings.TrimSpace(string(response.Body))),
+			"message": fmt.Sprintf("保存失败（HTTP %d）：%s", response.StatusCode, message),
 		}
 	}
 	return map[string]any{"ok": true, "message": "已保存！CPA 正在热加载新配置。"}

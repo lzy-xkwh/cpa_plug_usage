@@ -1,0 +1,12 @@
+# 本地 Go 工具链与临时探针目录
+.gotool/
+.tmp-probe/
+
+# 构建产物
+*.so
+*.dylib
+*.dll
+*.h
+
+# 测试产物
+coverage.out

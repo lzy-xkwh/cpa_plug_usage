@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -514,12 +515,245 @@ func decodeManagementResponse(t *testing.T, raw []byte) struct {
 	return resp
 }
 
-func TestSaveRequiresManagementKey(t *testing.T) {
-	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+func TestProfilesInheritGlobalRequestSettings(t *testing.T) {
+	if err := applyConfig([]byte(`
+enabled: true
+headers:
+  X-Tenant: tenant-a
+query:
+  region: cn
+credential_paths: access_token, nested.token
+profiles:
+  relay-a:
+    vendor: custom
+    endpoint: https://relay.example.com/balance
+    balance_path: data.balance
+`)); err != nil {
 		t.Fatalf("applyConfig() error = %v", err)
 	}
-	result := saveConfigViaManagementAPI(`{"enabled":true}`)
-	if result["ok"] != false {
-		t.Fatalf("save without management_key should fail, got %v", result)
+	profile, err := resolveProfile(currentConfig(), "RELAY-A")
+	if err != nil {
+		t.Fatalf("resolveProfile() error = %v", err)
+	}
+	if profile.Headers["X-Tenant"] != "tenant-a" || profile.Query["region"] != "cn" {
+		t.Fatalf("global request settings not inherited: %#v %#v", profile.Headers, profile.Query)
+	}
+	if len(profile.CredentialPaths) != 2 || profile.CredentialPaths[1] != "nested.token" {
+		t.Fatalf("credential paths not inherited: %#v", profile.CredentialPaths)
+	}
+}
+
+func TestJSONConfigUsesSnakeCaseFields(t *testing.T) {
+	var got config
+	if err := decodeConfig([]byte(`{"base_url":"https://relay.example.com","used_endpoint":"https://relay.example.com/usage","balance_path":"data.balance","used_scale":0.01}`), &got); err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if got.BaseURL != "https://relay.example.com" || got.UsedEndpoint == "" || got.BalancePath != "data.balance" || got.UsedScale != 0.01 {
+		t.Fatalf("snake_case JSON fields decoded incorrectly: %#v", got)
+	}
+}
+
+func TestWizardConfigWhitelistAndMerge(t *testing.T) {
+	cfg := config{
+		Enabled:         true,
+		ManagementKey:   "server-only",
+		ManagementURL:   "http://127.0.0.1:8317",
+		Headers:         map[string]string{"X-Tenant": "tenant-a"},
+		CredentialPaths: []string{"access_token"},
+	}
+	clean, err := validateWizardConfig(`{"enabled":false,"profiles":{"Relay-A":{"vendor":"custom","endpoint":"https://relay.example.com/balance","balance_path":"data.balance"}}}`)
+	if err != nil {
+		t.Fatalf("validateWizardConfig() error = %v", err)
+	}
+	merged, err := mergeWizardConfig(cfg, clean)
+	if err != nil {
+		t.Fatalf("mergeWizardConfig() error = %v", err)
+	}
+	if merged["management_key"] != "server-only" || merged["management_url"] != "http://127.0.0.1:8317" {
+		t.Fatalf("server-only fields were not preserved: %#v", merged)
+	}
+	profiles, ok := merged["profiles"].(map[string]any)
+	if !ok || profiles["relay-a"] == nil {
+		t.Fatalf("profiles were not merged: %#v", merged["profiles"])
+	}
+	for _, input := range []string{
+		`{"management_key":"leak"}`,
+		`{"headers":{"Authorization":"secret"}}`,
+		`{"profiles":{"x":{"credential_prefix":"Bearer "}}}`,
+		`{"profiles":{"x":{"used_scale":null}}}`,
+	} {
+		if _, err := validateWizardConfig(input); err == nil {
+			t.Fatalf("validateWizardConfig(%s) should reject unsafe input", input)
+		}
+	}
+}
+
+// 向导在仅配置 default 档案时会把档案字段提升到顶层提交，服务端必须接受。
+func TestWizardAcceptsHoistedDefaultProfile(t *testing.T) {
+	clean, err := validateWizardConfig(`{"enabled":true,"base_url":"https://relay.example.com","vendor":"one-api","used_scale":0.01}`)
+	if err != nil {
+		t.Fatalf("validateWizardConfig() error = %v", err)
+	}
+	if clean["base_url"] != "https://relay.example.com" || clean["used_scale"] != 0.01 {
+		t.Fatalf("hoisted fields missing: %#v", clean)
+	}
+	for _, input := range []string{
+		`{"management_url":"http://127.0.0.1:9999"}`,
+		`{"allow_insecure_http":true}`,
+		`{"credential_header":"X-Key"}`,
+		`{"query":{"token":"x"}}`,
+		`{"method":"DELETE"}`,
+	} {
+		if _, err := validateWizardConfig(input); err == nil {
+			t.Fatalf("validateWizardConfig(%s) should reject unsafe input", input)
+		}
+	}
+}
+
+// fakeHost 用测试接缝模拟宿主回调，返回一个成功携带 body 的 HTTP 结果。
+func fakeHost(t *testing.T, status int, body string, seen *httpRequest) {
+	t.Helper()
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod != "host.http.do" {
+			return nil, fmt.Errorf("unexpected host method %q", hostMethod)
+		}
+		var request httpRequest
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatalf("decode host request: %v", err)
+		}
+		if seen != nil {
+			*seen = request
+		}
+		result, err := json.Marshal(httpResponse{StatusCode: status, Body: []byte(body)})
+		if err != nil {
+			t.Fatalf("marshal fake response: %v", err)
+		}
+		return result, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+}
+
+func TestFetchQuotaEndToEnd(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nvendor: deepseek\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	var seen httpRequest
+	fakeHost(t, 200, `{"balance_infos":[{"total_balance":"12.5","currency":"CNY"}]}`, &seen)
+	storage, _ := json.Marshal(map[string]any{"api_key": "sk-test"})
+	resp, err := fetchQuota(quotaFetchRequest{Provider: "deepseek", StorageJSON: storage})
+	if err != nil {
+		t.Fatalf("fetchQuota() error = %v", err)
+	}
+	if len(resp.Groups) != 1 || len(resp.Groups[0].Buckets) != 1 {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Groups[0].Buckets[0].Description, "balance=12.5") {
+		t.Fatalf("balance missing from description: %q", resp.Groups[0].Buckets[0].Description)
+	}
+	if got := seen.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer sk-test" {
+		t.Fatalf("credential header = %#v", seen.Headers["Authorization"])
+	}
+	if seen.URL != "https://api.deepseek.com/user/balance" {
+		t.Fatalf("request URL = %q", seen.URL)
+	}
+}
+
+func TestFetchQuotaReportsUpstreamErrors(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nvendor: deepseek\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	fakeHost(t, 500, `{"error":"boom"}`, nil)
+	_, err := fetchQuota(quotaFetchRequest{Provider: "deepseek"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("fetchQuota() error = %v, want HTTP 500 mention", err)
+	}
+	fakeHost(t, 200, `not-json`, nil)
+	_, err = fetchQuota(quotaFetchRequest{Provider: "deepseek"})
+	if err == nil || !strings.Contains(err.Error(), "有效 JSON") {
+		t.Fatalf("fetchQuota() error = %v, want invalid JSON mention", err)
+	}
+}
+
+func TestConfigSwapIsRaceSafe(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			_ = applyConfig([]byte(fmt.Sprintf("enabled: true\npriority: %d\n", i)))
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		_ = currentConfig().Priority
+		_ = supportedProviders()
+	}
+	<-done
+	if err := applyConfig([]byte("enabled: false\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+}
+
+func TestExpandTemplateAndErrorEnvelope(t *testing.T) {
+	req := quotaFetchRequest{Provider: "p", AuthID: "a", AuthIndex: "1"}
+	got := expandTemplate("{provider}/{auth_id}/{auth_index}", req)
+	if got != "p/a/1" {
+		t.Fatalf("expandTemplate() = %q", got)
+	}
+	raw := errorEnvelope("bad", "出错了")
+	var env struct {
+		OK    bool `json:"ok"`
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.OK || env.Error == nil || env.Error.Code != "bad" {
+		t.Fatalf("errorEnvelope() = %s (%v)", raw, err)
+	}
+}
+
+func TestRegistrationMetadata(t *testing.T) {
+	registration := pluginRegistrationResponse()
+	if registration.SchemaVersion != schemaVersion {
+		t.Fatalf("schema version = %d", registration.SchemaVersion)
+	}
+	if registration.Metadata.Version == "" || registration.Metadata.Name != pluginID {
+		t.Fatalf("metadata = %#v", registration.Metadata)
+	}
+	if !registration.Capabilities["quota_provider"] {
+		t.Fatalf("capabilities = %#v", registration.Capabilities)
+	}
+}
+
+func TestURLValidationRejectsCredentialInjection(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://user:password@example.com/balance",
+		"https://example.com/balance#secret",
+		"ftp://example.com/balance",
+	} {
+		if _, err := validateEndpoint(endpoint, false); err == nil {
+			t.Fatalf("validateEndpoint(%q) should reject endpoint", endpoint)
+		}
+	}
+	if _, err := validateManagementURL("https://example.com/v0/management"); err == nil {
+		t.Fatal("validateManagementURL should reject a resource path")
+	}
+	if got, err := validateManagementURL("http://127.0.0.1:8317/"); err != nil || got.String() != "http://127.0.0.1:8317/" {
+		t.Fatalf("local management URL validation = %v, %v", got, err)
+	}
+}
+
+func TestVendorByHostUsesDomainBoundaries(t *testing.T) {
+	cases := map[string]string{
+		"https://api.deepseek.com":        "deepseek",
+		"https://sub.api.deepseek.com/v1": "deepseek",
+		"https://evil-deepseek.example":   "",
+		"https://openrouter.ai.evil.test": "",
+		"not a url containing moonshot":   "",
+	}
+	for input, want := range cases {
+		if got := vendorByHost(input); got != want {
+			t.Fatalf("vendorByHost(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
