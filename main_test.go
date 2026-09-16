@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -734,6 +735,37 @@ func TestWizardAllowsManagementKeyReset(t *testing.T) {
 	}
 	if !strings.Contains(page, "showKeySetup") || !strings.Contains(page, "HTTP 40[13]") {
 		t.Fatal("wizard page must auto-reveal key setup on 401/403")
+	}
+}
+
+// CPA 管理鉴权层对连续 5 次密钥错误触发 30 分钟 IP 封禁（403），
+// 密钥错误本身是 401。向导页必须透传 CPA 的真实原因而不是笼统提示。
+func TestWizardSurfacesManagementAuthErrors(t *testing.T) {
+	page := configWizardPage()
+	for _, want := range []string{"managementErrorText", "banned", "allow-remote"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("wizard page missing %q guidance", want)
+		}
+	}
+}
+
+// 服务端发现供应商遇到 403 封禁时，note 必须解释封禁机制。
+func TestDiscoverProvidersExplainsBan(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: test-key\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		result, _ := json.Marshal(httpResponse{
+			StatusCode: http.StatusForbidden,
+			Body:       []byte(`{"error":"IP banned due to too many failed attempts. Try again in 29m0s"}`),
+		})
+		return result, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	_, note := discoverProviders(currentConfig())
+	if !strings.Contains(note, "封禁") || !strings.Contains(note, "Try again in 29m0s") {
+		t.Fatalf("discoverProviders note = %q, want ban explanation with CPA detail", note)
 	}
 }
 

@@ -397,7 +397,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.4",
+			Version:          "0.7.5",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1543,8 +1543,20 @@ func discoverProviders(cfg config) ([]providerStatus, string) {
 			"无法通过 CPA 管理 API 列出供应商（%v）。请确认插件配置 management_url 指向 CPA 服务地址（默认 http://127.0.0.1:8317）且 management_key 有效", err)
 	}
 	if response.StatusCode != 200 {
-		return []providerStatus{}, fmt.Sprintf(
-			"CPA 管理 API 返回 HTTP %d：无法列出供应商。请检查 management_key 是否为有效的管理密钥", response.StatusCode)
+		detail := strings.TrimSpace(string(response.Body))
+		switch {
+		case response.StatusCode == http.StatusUnauthorized:
+			return []providerStatus{}, "CPA 管理 API 返回 HTTP 401：已保存的 management_key 不正确。请点击「重设管理密钥」重新粘贴一次（注意：连续输错 5 次会触发 30 分钟 IP 封禁）。"
+		case response.StatusCode == http.StatusForbidden && strings.Contains(detail, "banned"):
+			return []providerStatus{}, fmt.Sprintf(
+				"CPA 管理 API 返回 HTTP 403：%s。这是 CPA 的防爆破封禁（连续 5 次密钥错误后封禁本机 30 分钟），期间即使密钥正确也会被拒；等待封禁结束或重启 CPA 后重试。", detail)
+		case response.StatusCode == http.StatusForbidden:
+			return []providerStatus{}, fmt.Sprintf(
+				"CPA 管理 API 返回 HTTP 403：%s。若提示 remote management disabled，请在 CPA config.yaml 的 remote-management 下设置 allow-remote: true。", detail)
+		default:
+			return []providerStatus{}, fmt.Sprintf(
+				"CPA 管理 API 返回 HTTP %d：无法列出供应商。%s", response.StatusCode, detail)
+		}
 	}
 	var payload struct {
 		Files []struct {
@@ -1810,6 +1822,9 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 		if message == "" {
 			message = "管理 API 未返回错误详情"
 		}
+		if response.StatusCode == http.StatusForbidden && strings.Contains(message, "banned") {
+			message += "（这是 CPA 的防爆破封禁：连续 5 次密钥错误后封禁 30 分钟，期间密钥正确也会被拒；等待解除或重启 CPA。）"
+		}
 		return map[string]any{
 			"ok":      false,
 			"message": fmt.Sprintf("保存失败（HTTP %d）：%s", response.StatusCode, message),
@@ -1859,7 +1874,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">粘贴 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。</div>
+<div class="tip">粘贴 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
 <div class="row" style="margin-top:8px">
   <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management key）"></div>
   <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
@@ -2080,6 +2095,17 @@ function toYAML(obj, indent){
   }
   return lines.join("\n");
 }
+function managementErrorText(status, body){
+  var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
+  if (status === 401) return "密钥不正确（HTTP 401）。请核对 CPA config.yaml 中 remote-management secret-key 对应的原始密码后再粘贴。";
+  if (status === 403) {
+    if (/banned/i.test(detail)) return "已触发 CPA 防爆破封禁：" + detail + "。连续输错 5 次会封禁本机 IP 30 分钟，期间密钥正确也会被拒；等待封禁结束或重启 CPA 立即解除，然后再粘贴正确的密钥（只粘贴一次）。";
+    if (/disabled/i.test(detail)) return "CPA 未开启远程管理（HTTP 403）。请在 config.yaml 的 remote-management 下设置 allow-remote: true 后重试。";
+    if (/not set/i.test(detail)) return "CPA 服务端尚未设置管理密钥（HTTP 403）。请先在 config.yaml 的 remote-management.secret-key 配置。";
+    return "保存被拒绝（HTTP 403）：" + (detail || "未知原因");
+  }
+  return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
+}
 function saveKey(){
   var key = document.getElementById("mgmtkey").value.trim();
   if (!key) { msg("请输入管理密钥", "err"); return; }
@@ -2088,10 +2114,12 @@ function saveKey(){
     headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
     body: JSON.stringify({management_key: key})
   }, 10000).then(function(r){
-    if (!r.ok) throw new Error("HTTP " + r.status + "（密钥不对或无权限）");
-    msg("管理密钥已保存，正在加载供应商列表…", "ok");
-    document.getElementById("mgmtkey").value = "";
-    setTimeout(loadData, 600);
+    return r.json().catch(function(){ return {}; }).then(function(body){
+      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return; }
+      msg("管理密钥已保存，正在加载供应商列表…", "ok");
+      document.getElementById("mgmtkey").value = "";
+      setTimeout(loadData, 600);
+    });
   }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); });
 }
 loadData();
