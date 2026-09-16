@@ -10,12 +10,23 @@ permissions:
 
 jobs:
   test:
-    name: Test & Vet (linux-${{ matrix.goarch }})
+    name: CI (linux-${{ matrix.goarch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goarch: [amd64, arm64]
+        include:
+          # amd64 在原生 runner 上执行完整门禁（测试需要运行二进制）。
+          - goarch: amd64
+            run-tests: true
+          # arm64 只能交叉编译：runner 是 x86_64，交叉出的 arm64 测试
+          # 二进制无法在宿主执行（exec format error），因此这里做
+          # vet + c-shared 构建验证；测试由 amd64 作业覆盖。
+          - goarch: arm64
+            run-tests: false
+    env:
+      GOARCH: ${{ matrix.goarch }}
+      CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,26 +41,18 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Vet
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
           set -euo pipefail
           CGO_ENABLED=1 go vet ./...
 
-      - name: Test
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+      - name: Test (race + coverage)
+        if: matrix.run-tests
         run: |
           set -euo pipefail
           CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
       - name: Verify c-shared build
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
           set -euo pipefail
           CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o api-balance.so .
