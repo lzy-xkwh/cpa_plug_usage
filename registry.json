@@ -28,13 +28,13 @@
             "goos": "linux",
             "goarch": "amd64",
             "url": "https://cdn.jsdelivr.net/gh/lzy-xkwh/cpa_plug_usage@dist/api-balance_0.8.1_linux_amd64.zip",
-            "sha256": "PENDING_CI"
+            "sha256": "b4667c993a404886136c7de3ab52a03c6f1ad455a7981e124cc87fc18a37f957"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
             "url": "https://cdn.jsdelivr.net/gh/lzy-xkwh/cpa_plug_usage@dist/api-balance_0.8.1_linux_arm64.zip",
-            "sha256": "PENDING_CI"
+            "sha256": "e0dec2f7043f7e5fd96bdb1b02867780581f73ac7ee673249b2b199ce010b9d9"
           }
         ]
       },
