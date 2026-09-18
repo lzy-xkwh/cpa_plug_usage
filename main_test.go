@@ -762,16 +762,20 @@ func TestListCredentialsClassification(t *testing.T) {
 		result, _ := json.Marshal(map[string]any{
 			"files": []map[string]any{
 				{"provider": "deepseek", "label": "DeepSeek 官方"},
-				{"provider": "openai", "label": "OpenAI"},
+				{"provider": "openai", "label": "OpenAI 官方"},
+				{"provider": "openai", "label": "第三方中转", "base_url": "https://relay.example.com/v1"},
 				{"provider": "my-relay", "label": "中转站", "disabled": true},
 			},
 		})
 		return result, nil
 	}
 	t.Cleanup(func() { hostCallMethod = previous })
-	providers, note := listCredentials()
+	providers, credentials, note := listCredentials()
 	if note != "" {
 		t.Fatalf("note = %q, want empty", note)
+	}
+	if len(credentials) != 4 {
+		t.Fatalf("credentials len = %d, want 4", len(credentials))
 	}
 	byName := map[string]providerStatus{}
 	for _, p := range providers {
@@ -780,8 +784,8 @@ func TestListCredentialsClassification(t *testing.T) {
 	if byName["deepseek"].Status != "ok" {
 		t.Fatalf("deepseek status = %q, want ok", byName["deepseek"].Status)
 	}
-	if byName["openai"].Status != "unsupported" {
-		t.Fatalf("openai status = %q, want unsupported", byName["openai"].Status)
+	if byName["openai"].Status != "configurable" {
+		t.Fatalf("openai with relay base_url status = %q, want configurable", byName["openai"].Status)
 	}
 	if byName["my-relay"].Status != "configurable" {
 		t.Fatalf("my-relay status = %q, want configurable", byName["my-relay"].Status)
@@ -800,7 +804,7 @@ func TestListCredentialsHostErrorIsActionable(t *testing.T) {
 		return nil, errors.New("host bridge unavailable")
 	}
 	t.Cleanup(func() { hostCallMethod = previous })
-	_, note := listCredentials()
+	_, _, note := listCredentials()
 	if !strings.Contains(note, "host.auth.list") {
 		t.Fatalf("note = %q, want host.auth.list mention", note)
 	}

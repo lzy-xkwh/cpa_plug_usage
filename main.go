@@ -397,7 +397,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.8.0",
+			Version:          "0.8.1",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1449,6 +1449,16 @@ var knownNoBalanceProviders = map[string]string{
 	"qwen-code":   "Qwen 官方未提供可查询余额的公开接口",
 }
 
+// credentialInfo 向导诊断用的单条凭据摘要（不含任何密钥）。
+type credentialInfo struct {
+	Provider    string `json:"provider"`
+	Name        string `json:"name,omitempty"`
+	Label       string `json:"label,omitempty"`
+	BaseURL     string `json:"base_url,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
+	RuntimeOnly bool   `json:"runtime_only,omitempty"`
+}
+
 type providerStatus struct {
 	Provider string `json:"provider"`
 	Label    string `json:"label,omitempty"`
@@ -1466,8 +1476,9 @@ func configDataResponse() map[string]any {
 		"config":                sanitizedPageConfig(cfg),
 	}
 	// 供应商列表直接通过宿主回调 host.auth.list 获取，无需任何管理密钥。
-	providers, note := listCredentials()
+	providers, credentials, note := listCredentials()
 	resp["providers"] = providers
+	resp["credentials"] = credentials
 	if note != "" {
 		resp["providers_note"] = note
 	}
@@ -1522,40 +1533,54 @@ func managementBaseURL(cfg config) string {
 	return "http://127.0.0.1:8317"
 }
 
-// listCredentials 通过宿主回调 host.auth.list 读取已配置供应商，
-// 并结合插件自身声明的支持范围标注余额状态。无需任何管理密钥。
-func listCredentials() ([]providerStatus, string) {
+// listCredentials 通过宿主回调 host.auth.list 读取全部凭据，
+// 按供应商聚合并标注余额状态。带 base_url 的凭据视为第三方中转，
+// 即使 provider 名与官方厂商同名（如 openai）也按可配置处理。
+func listCredentials() ([]providerStatus, []credentialInfo, string) {
 	raw, err := hostCallMethod("host.auth.list", nil)
 	if err != nil {
-		return []providerStatus{}, "无法从 CPA 读取凭据列表（host.auth.list: " + err.Error() + "）"
+		return []providerStatus{}, []credentialInfo{}, "无法从 CPA 读取凭据列表（host.auth.list: " + err.Error() + "）"
 	}
 	var payload struct {
 		Files []struct {
-			Provider string `json:"provider"`
-			Label    string `json:"label"`
-			Name     string `json:"name"`
-			Disabled bool   `json:"disabled"`
+			Provider    string `json:"provider"`
+			Name        string `json:"name"`
+			Label       string `json:"label"`
+			Disabled    bool   `json:"disabled"`
+			RuntimeOnly bool   `json:"runtime_only"`
+			BaseURL     string `json:"base_url"`
 		} `json:"files"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return []providerStatus{}, "解析凭据列表失败: " + err.Error()
+		return []providerStatus{}, []credentialInfo{}, "解析凭据列表失败: " + err.Error()
 	}
 	supported := map[string]struct{}{}
 	for _, name := range supportedProviders() {
 		supported[strings.ToLower(name)] = struct{}{}
 	}
 	type aggregate struct {
-		label    string
-		active   int
-		disabled int
+		label      string
+		active     int
+		disabled   int
+		withURL    int
+		sampleURL  string
+		credential []credentialInfo
 	}
 	order := []string{}
 	byProvider := map[string]*aggregate{}
+	credentials := make([]credentialInfo, 0, len(payload.Files))
 	for _, file := range payload.Files {
 		provider := strings.ToLower(strings.TrimSpace(file.Provider))
+		baseURL := strings.TrimSpace(file.BaseURL)
+		name := strings.TrimSpace(file.Name)
+		label := strings.TrimSpace(file.Label)
 		if provider == "" {
-			continue
+			provider = "(未命名)"
 		}
+		credentials = append(credentials, credentialInfo{
+			Provider: provider, Name: name, Label: label,
+			BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
+		})
 		entry, ok := byProvider[provider]
 		if !ok {
 			entry = &aggregate{}
@@ -1567,23 +1592,34 @@ func listCredentials() ([]providerStatus, string) {
 		} else {
 			entry.active++
 		}
-		if entry.label == "" {
-			entry.label = strings.TrimSpace(file.Label)
-			if entry.label == "" {
-				entry.label = strings.TrimSpace(file.Name)
+		if baseURL != "" {
+			entry.withURL++
+			if entry.sampleURL == "" {
+				entry.sampleURL = baseURL
 			}
 		}
+		if entry.label == "" {
+			entry.label = label
+			if entry.label == "" {
+				entry.label = name
+			}
+		}
+		entry.credential = append(entry.credential, credentialInfo{
+			Provider: provider, Name: name, Label: label,
+			BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
+		})
 	}
 	result := make([]providerStatus, 0, len(order))
 	for _, provider := range order {
 		entry := byProvider[provider]
 		status := providerStatus{Provider: provider, Label: entry.label}
+		isRelay := entry.withURL > 0 // 有站点地址 = 第三方中转，不是官方接口
 		switch {
-		case knownNoBalanceProviders[provider] != "":
+		case knownNoBalanceProviders[provider] != "" && !isRelay:
 			status.Status = "unsupported"
 			status.Note = knownNoBalanceProviders[provider]
 		default:
-			if _, ok := supported[provider]; ok {
+			if _, ok := supported[provider]; ok && (entry.active > 0 || entry.disabled == 0) {
 				status.Status = "ok"
 				if entry.active == 0 {
 					status.Note = "插件支持该供应商；当前凭据均已停用，启用后即可显示余额"
@@ -1594,6 +1630,8 @@ func listCredentials() ([]providerStatus, string) {
 				status.Status = "configurable"
 				if entry.active == 0 {
 					status.Note = "全部凭据已停用；启用后勾选并配置余额查询即可"
+				} else if isRelay {
+					status.Note = fmt.Sprintf("第三方中转（%s 等共 %d 个站点地址）：勾选后选择厂商类型即可", entry.sampleURL, entry.withURL)
 				} else {
 					status.Note = "尚未配置余额查询：勾选后选择厂商类型即可"
 				}
@@ -1601,7 +1639,7 @@ func listCredentials() ([]providerStatus, string) {
 		}
 		result = append(result, status)
 	}
-	return result, ""
+	return result, credentials, ""
 }
 
 // wizardTopLevelKeys 允许向导提交的顶层字段：控制字段 + 余额标量字段
@@ -1861,6 +1899,10 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <table><thead><tr><th style="width:26%">供应商</th><th style="width:22%">状态</th><th>说明</th><th style="width:70px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table>
 <div class="tip" id="provNote"></div>
+<details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
+<div class="tip" id="credInfo"></div>
+<table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
+</details>
 </div>
 
 <div class="card" id="cfgCard" style="display:none">
@@ -1929,7 +1971,17 @@ function loadData(){
     renderForms();
   }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); });
 }
+function renderCredentials(d){
+  var list = d.credentials || [];
+  document.getElementById("credInfo").textContent = "host.auth.list 共返回 " + list.length + " 个凭据。若此处的数量与「AI 提供商」页签的配置数不一致，请把本行截图反馈给插件作者。";
+  var rows = "";
+  list.forEach(function(c){
+    rows += "<tr><td>" + esc(c.provider) + "</td><td class='tip'>" + esc(c.name || c.label || "") + "</td><td class='tip'>" + esc(c.base_url || "") + "</td><td class='tip'>" + (c.disabled ? "已停用" : "启用") + (c.runtime_only ? " · 运行时" : "") + "</td></tr>";
+  });
+  document.getElementById("credRows").innerHTML = rows || "<tr><td colspan='4' class='tip'>（空）</td></tr>";
+}
 function renderProviders(d){
+  renderCredentials(d);
   var rows = document.getElementById("provRows");
   var list = d.providers || [];
   if (!list.length) {
