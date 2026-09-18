@@ -397,7 +397,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.7.5",
+			Version:          "0.8.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1465,12 +1465,8 @@ func configDataResponse() map[string]any {
 		"management_url":        managementBaseURL(cfg),
 		"config":                sanitizedPageConfig(cfg),
 	}
-	if cfg.ManagementKey == "" {
-		resp["providers"] = []providerStatus{}
-		resp["providers_note"] = "尚未保存 CPA 管理密钥：在下方粘贴一次即可自动列出所有已配置供应商（仅保存在插件配置中，不会下发到页面）。"
-		return resp
-	}
-	providers, note := discoverProviders(cfg)
+	// 供应商列表直接通过宿主回调 host.auth.list 获取，无需任何管理密钥。
+	providers, note := listCredentials()
 	resp["providers"] = providers
 	if note != "" {
 		resp["providers_note"] = note
@@ -1526,55 +1522,32 @@ func managementBaseURL(cfg config) string {
 	return "http://127.0.0.1:8317"
 }
 
-// discoverProviders 通过 CPA 管理 API 列出已配置供应商并标注余额支持状态。
-func discoverProviders(cfg config) ([]providerStatus, string) {
-	baseURL := managementBaseURL(cfg)
-	request := httpRequest{
-		Method: http.MethodGet,
-		URL:    baseURL + "/v0/management/auth-files",
-		Headers: map[string][]string{
-			"Authorization": {"Bearer " + cfg.ManagementKey},
-			"Accept":        {"application/json"},
-		},
-	}
-	response, err := callHostHTTP(request)
+// listCredentials 通过宿主回调 host.auth.list 读取已配置供应商，
+// 并结合插件自身声明的支持范围标注余额状态。无需任何管理密钥。
+func listCredentials() ([]providerStatus, string) {
+	raw, err := hostCallMethod("host.auth.list", nil)
 	if err != nil {
-		return []providerStatus{}, fmt.Sprintf(
-			"无法通过 CPA 管理 API 列出供应商（%v）。请确认插件配置 management_url 指向 CPA 服务地址（默认 http://127.0.0.1:8317）且 management_key 有效", err)
-	}
-	if response.StatusCode != 200 {
-		detail := strings.TrimSpace(string(response.Body))
-		switch {
-		case response.StatusCode == http.StatusUnauthorized:
-			return []providerStatus{}, "CPA 管理 API 返回 HTTP 401：已保存的 management_key 不正确。请点击「重设管理密钥」重新粘贴一次（注意：连续输错 5 次会触发 30 分钟 IP 封禁）。"
-		case response.StatusCode == http.StatusForbidden && strings.Contains(detail, "banned"):
-			return []providerStatus{}, fmt.Sprintf(
-				"CPA 管理 API 返回 HTTP 403：%s。这是 CPA 的防爆破封禁（连续 5 次密钥错误后封禁本机 30 分钟），期间即使密钥正确也会被拒；等待封禁结束或重启 CPA 后重试。", detail)
-		case response.StatusCode == http.StatusForbidden:
-			return []providerStatus{}, fmt.Sprintf(
-				"CPA 管理 API 返回 HTTP 403：%s。若提示 remote management disabled，请在 CPA config.yaml 的 remote-management 下设置 allow-remote: true。", detail)
-		default:
-			return []providerStatus{}, fmt.Sprintf(
-				"CPA 管理 API 返回 HTTP %d：无法列出供应商。%s", response.StatusCode, detail)
-		}
+		return []providerStatus{}, "无法从 CPA 读取凭据列表（host.auth.list: " + err.Error() + "）"
 	}
 	var payload struct {
 		Files []struct {
-			Provider      string `json:"provider"`
-			Label         string `json:"label"`
-			Name          string `json:"name"`
-			Disabled      bool   `json:"disabled"`
-			SupportsQuota bool   `json:"supports_quota"`
+			Provider string `json:"provider"`
+			Label    string `json:"label"`
+			Name     string `json:"name"`
+			Disabled bool   `json:"disabled"`
 		} `json:"files"`
 	}
-	if err := json.Unmarshal(response.Body, &payload); err != nil {
-		return []providerStatus{}, "解析供应商列表失败: " + err.Error()
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return []providerStatus{}, "解析凭据列表失败: " + err.Error()
+	}
+	supported := map[string]struct{}{}
+	for _, name := range supportedProviders() {
+		supported[strings.ToLower(name)] = struct{}{}
 	}
 	type aggregate struct {
-		label     string
-		total     int
-		active    int
-		supported bool
+		label    string
+		active   int
+		disabled int
 	}
 	order := []string{}
 	byProvider := map[string]*aggregate{}
@@ -1589,12 +1562,10 @@ func discoverProviders(cfg config) ([]providerStatus, string) {
 			byProvider[provider] = entry
 			order = append(order, provider)
 		}
-		entry.total++
-		if !file.Disabled {
+		if file.Disabled {
+			entry.disabled++
+		} else {
 			entry.active++
-		}
-		if file.SupportsQuota {
-			entry.supported = true
 		}
 		if entry.label == "" {
 			entry.label = strings.TrimSpace(file.Label)
@@ -1608,18 +1579,24 @@ func discoverProviders(cfg config) ([]providerStatus, string) {
 		entry := byProvider[provider]
 		status := providerStatus{Provider: provider, Label: entry.label}
 		switch {
-		case entry.supported:
-			status.Status = "ok"
-			status.Note = "余额已在供应商页签显示，无需任何配置"
 		case knownNoBalanceProviders[provider] != "":
 			status.Status = "unsupported"
 			status.Note = knownNoBalanceProviders[provider]
 		default:
-			status.Status = "configurable"
-			if entry.active == 0 {
-				status.Note = "全部凭据已停用；勾选后可选择厂商配置余额查询"
+			if _, ok := supported[provider]; ok {
+				status.Status = "ok"
+				if entry.active == 0 {
+					status.Note = "插件支持该供应商；当前凭据均已停用，启用后即可显示余额"
+				} else {
+					status.Note = "余额已在供应商页签显示，无需任何配置"
+				}
 			} else {
-				status.Note = "尚未配置余额查询：勾选后选择厂商类型即可"
+				status.Status = "configurable"
+				if entry.active == 0 {
+					status.Note = "全部凭据已停用；启用后勾选并配置余额查询即可"
+				} else {
+					status.Note = "尚未配置余额查询：勾选后选择厂商类型即可"
+				}
 			}
 		}
 		result = append(result, status)
@@ -1664,8 +1641,6 @@ var wizardProfileKeys = map[string]struct{}{
 	"window_name":   {},
 }
 
-// validateWizardConfig 只允许向导编辑启用状态、优先级和余额 profiles。
-// 管理密钥、认证请求头、凭据路径及管理地址必须留在服务端插件配置中。
 func validateWizardConfig(saveJSON string) (map[string]any, error) {
 	var incoming map[string]json.RawMessage
 	decoder := json.NewDecoder(strings.NewReader(saveJSON))
@@ -1873,8 +1848,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 
 <div class="card" id="setupCard" style="display:none">
-<h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">粘贴 CPA 的管理密钥（管理后台登录用的那个 key），向导即可自动读取供应商列表、保存配置。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
+<h2>保存配置用的 CPA 管理密钥（可选）</h2>
+<div class="tip">仅「保存到 CPA」时需要：粘贴 CPA 的管理密钥（管理后台登录用的那个 key），供应商列表已通过宿主自动读取，无需密钥。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
 <div class="row" style="margin-top:8px">
   <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management key）"></div>
   <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
@@ -2064,6 +2039,11 @@ function collectConfig(){
   return cfg;
 }
 function saveAll(){
+  if (DATA && !DATA.management_configured) {
+    showKeySetup();
+    msg("保存需要 CPA 管理密钥：请在上方粘贴一次（供应商列表不受影响，已自动读取）", "err");
+    return;
+  }
   var cfg = collectConfig();
   var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
   fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)

@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 )
@@ -750,22 +750,59 @@ func TestWizardSurfacesManagementAuthErrors(t *testing.T) {
 }
 
 // 服务端发现供应商遇到 403 封禁时，note 必须解释封禁机制。
-func TestDiscoverProvidersExplainsBan(t *testing.T) {
-	if err := applyConfig([]byte("enabled: true\nmanagement_key: test-key\n")); err != nil {
+func TestListCredentialsClassification(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
 		t.Fatalf("applyConfig() error = %v", err)
 	}
 	previous := hostCallMethod
 	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
-		result, _ := json.Marshal(httpResponse{
-			StatusCode: http.StatusForbidden,
-			Body:       []byte(`{"error":"IP banned due to too many failed attempts. Try again in 29m0s"}`),
+		if hostMethod != "host.auth.list" {
+			t.Fatalf("expected host.auth.list, got %s", hostMethod)
+		}
+		result, _ := json.Marshal(map[string]any{
+			"files": []map[string]any{
+				{"provider": "deepseek", "label": "DeepSeek 官方"},
+				{"provider": "openai", "label": "OpenAI"},
+				{"provider": "my-relay", "label": "中转站", "disabled": true},
+			},
 		})
 		return result, nil
 	}
 	t.Cleanup(func() { hostCallMethod = previous })
-	_, note := discoverProviders(currentConfig())
-	if !strings.Contains(note, "封禁") || !strings.Contains(note, "Try again in 29m0s") {
-		t.Fatalf("discoverProviders note = %q, want ban explanation with CPA detail", note)
+	providers, note := listCredentials()
+	if note != "" {
+		t.Fatalf("note = %q, want empty", note)
+	}
+	byName := map[string]providerStatus{}
+	for _, p := range providers {
+		byName[p.Provider] = p
+	}
+	if byName["deepseek"].Status != "ok" {
+		t.Fatalf("deepseek status = %q, want ok", byName["deepseek"].Status)
+	}
+	if byName["openai"].Status != "unsupported" {
+		t.Fatalf("openai status = %q, want unsupported", byName["openai"].Status)
+	}
+	if byName["my-relay"].Status != "configurable" {
+		t.Fatalf("my-relay status = %q, want configurable", byName["my-relay"].Status)
+	}
+	if !strings.Contains(byName["my-relay"].Note, "停用") {
+		t.Fatalf("my-relay note = %q, want disabled hint", byName["my-relay"].Note)
+	}
+}
+
+func TestListCredentialsHostErrorIsActionable(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		return nil, errors.New("host bridge unavailable")
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	_, note := listCredentials()
+	if !strings.Contains(note, "host.auth.list") {
+		t.Fatalf("note = %q, want host.auth.list mention", note)
 	}
 }
 
