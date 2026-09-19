@@ -107,13 +107,17 @@ type config struct {
 	// 自动列出已配置供应商、保存配置。仅保存在插件配置里，不回传给页面。
 	ManagementKey string `yaml:"management_key" json:"management_key"`
 	ManagementURL string `yaml:"management_url" json:"management_url"`
-	BalancePath   string `yaml:"balance_path" json:"balance_path"`
-	UsedPath      string `yaml:"used_path" json:"used_path"`
-	LimitPath     string `yaml:"limit_path" json:"limit_path"`
-	CurrencyPath  string `yaml:"currency_path" json:"currency_path"`
-	PlanPath      string `yaml:"plan_path" json:"plan_path"`
-	ResetPath     string `yaml:"reset_path" json:"reset_path"`
-	WindowName    string `yaml:"window_name" json:"window_name"`
+	// Providers 是「显示余额」的供应商名单（provider 名，即 profiles 的键）。
+	// 非空时 CPA 只会把这些供应商的余额查询路由给本插件；为空时沿用
+	// 旧规则（内置厂商名 + 全部档案名）。
+	Providers    []string `yaml:"providers" json:"providers"`
+	BalancePath  string   `yaml:"balance_path" json:"balance_path"`
+	UsedPath     string   `yaml:"used_path" json:"used_path"`
+	LimitPath    string   `yaml:"limit_path" json:"limit_path"`
+	CurrencyPath string   `yaml:"currency_path" json:"currency_path"`
+	PlanPath     string   `yaml:"plan_path" json:"plan_path"`
+	ResetPath    string   `yaml:"reset_path" json:"reset_path"`
+	WindowName   string   `yaml:"window_name" json:"window_name"`
 	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
 	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
 	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
@@ -397,7 +401,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.8.1",
+			Version:          "0.9.0",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -439,6 +443,22 @@ func applyConfig(raw []byte) error {
 	}
 	if err := normalizeDefaults(&next); err != nil {
 		return err
+	}
+	if len(next.Providers) > 0 {
+		resolved := make([]string, 0, len(next.Providers))
+		seen := map[string]struct{}{}
+		for _, name := range next.Providers {
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			resolved = append(resolved, name)
+		}
+		next.Providers = resolved
 	}
 	if len(next.Profiles) > 0 {
 		resolved := make(map[string]config, len(next.Profiles))
@@ -610,9 +630,27 @@ func resolveProfile(cfg config, provider string) (config, error) {
 	return config{}, fmt.Errorf("凭据 provider %q 没有匹配的余额档案，请在 profiles 中添加 %q 或 default", provider, name)
 }
 
-// supportedProviders 声明本插件可服务的凭据 provider 集合，
-// 包含内置厂商名与用户定义的档案名，供 CPA 宿主路由 quota.fetch。
+// supportedProviders 声明本插件可服务的凭据 provider 集合，供 CPA 宿主
+// 路由 quota.fetch。用户在向导里勾选的「显示余额」名单（providers）优先：
+// 非空时只声明名单内的供应商，未勾选的不再参与余额查询；为空时沿用旧规则
+// （内置厂商名 + 全部档案名），保持向后兼容。
 func supportedProviders() []string {
+	cfg := currentConfig()
+	if len(cfg.Providers) > 0 {
+		set := map[string]struct{}{
+			providerID:            {},
+			"third-party-balance": {},
+		}
+		for _, name := range cfg.Providers {
+			set[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+		}
+		out := make([]string, 0, len(set))
+		for name := range set {
+			out = append(out, name)
+		}
+		sort.Strings(out)
+		return out
+	}
 	set := map[string]struct{}{
 		providerID:            {},
 		"third-party-balance": {},
@@ -620,7 +658,6 @@ func supportedProviders() []string {
 	for _, vendor := range vendorNames {
 		set[vendor] = struct{}{}
 	}
-	cfg := currentConfig()
 	for name := range cfg.Profiles {
 		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
 			set[name] = struct{}{}
@@ -661,6 +698,10 @@ func decodeConfig(raw []byte, out *config) error {
 		if strings.HasPrefix(content, "- ") {
 			if section == "profiles" {
 				return fmt.Errorf("第 %d 行: 档案内暂不支持列表写法，credential_paths 请使用逗号分隔", lineNumber)
+			}
+			if section == "providers" {
+				out.Providers = append(out.Providers, parseScalar(strings.TrimSpace(strings.TrimPrefix(content, "- "))))
+				continue
 			}
 			if section != "credential_paths" {
 				// CPA may pass store metadata containing lists such as
@@ -857,9 +898,30 @@ func currentConfig() config {
 }
 
 func fetchQuota(req quotaFetchRequest) (quotaFetchResponse, error) {
+	return fetchQuotaWithSelectionGate(req, true)
+}
+
+// fetchQuotaWithSelectionGate 控制「providers 选择名单」是否生效：
+// CPA 路由的 quota.fetch 必须受限，而向导页的手动查询不受限，
+// 否则保存前的预览查询会被自己的名单拦住。
+func fetchQuotaWithSelectionGate(req quotaFetchRequest, enforceSelection bool) (quotaFetchResponse, error) {
 	cfg := currentConfig()
 	if !cfg.Enabled {
 		return quotaFetchResponse{}, errors.New("插件未启用，请在配置中设置 enabled: true")
+	}
+	// 用户勾选了「显示余额」名单后，未勾选的供应商不再参与余额查询。
+	if enforceSelection && len(cfg.Providers) > 0 {
+		provider := strings.ToLower(strings.TrimSpace(req.Provider))
+		found := false
+		for _, name := range cfg.Providers {
+			if name == provider {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return quotaFetchResponse{}, fmt.Errorf("供应商 %q 未选择显示余额：请在余额向导中勾选后保存", req.Provider)
+		}
 	}
 	profile, profileErr := resolveProfile(cfg, req.Provider)
 	if profileErr != nil || profile.Endpoint == "" {
@@ -1380,12 +1442,20 @@ func firstQuery(query map[string][]string, key string) string {
 // handleManagementRPC 处理宿主转发的插件管理/资源请求：
 //
 //	GET /v0/resource/plugins/api-balance/config-wizard           向导页面
-//	GET /v0/resource/plugins/api-balance/config-wizard?save=JSON 保存配置（服务端直调管理 API）
+//	GET /v0/resource/plugins/api-balance/config-wizard?save=JSON  保存配置（服务端直调管理 API）
+//	GET /v0/resource/plugins/api-balance/config-wizard?balance=P  查询某供应商的实际余额
 //	GET /v0/resource/plugins/api-balance/config-data             当前配置 + 供应商支持状态
 func handleManagementRPC(request []byte) ([]byte, error) {
 	var req managementRPCRequest
 	if err := json.Unmarshal(request, &req); err != nil {
 		return nil, fmt.Errorf("解析管理请求失败: %w", err)
+	}
+	if provider := firstQuery(req.Query, "balance"); provider != "" {
+		payload, err := json.Marshal(fetchProviderBalance(provider))
+		if err != nil {
+			return nil, fmt.Errorf("编码余额结果失败: %w", err)
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if saveJSON := firstQuery(req.Query, "save"); saveJSON != "" {
 		payload, err := json.Marshal(saveConfigViaManagementAPI(saveJSON))
@@ -1395,7 +1465,7 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/config-data") {
-		payload, err := json.Marshal(configDataResponse())
+		payload, err := json.Marshal(wizardDataResponse())
 		if err != nil {
 			return nil, fmt.Errorf("编码向导数据失败: %w", err)
 		}
@@ -1457,6 +1527,9 @@ type credentialInfo struct {
 	BaseURL     string `json:"base_url,omitempty"`
 	Disabled    bool   `json:"disabled,omitempty"`
 	RuntimeOnly bool   `json:"runtime_only,omitempty"`
+	// Source 区分凭据来源：file = 宿主凭据文件（host.auth.list），
+	// config = config.yaml 中的 API-Key 供应商（经管理 API 聚合）。
+	Source string `json:"source,omitempty"`
 }
 
 type providerStatus struct {
@@ -1466,19 +1539,21 @@ type providerStatus struct {
 	Note     string `json:"note,omitempty"`
 }
 
-// configDataResponse 返回向导页所需的全部数据：当前配置（脱敏）与
+// wizardDataResponse 返回向导页所需的全部数据：当前配置（脱敏）与
 // 已配置供应商的余额支持状态。management_key 只在服务端使用，不下发。
-func configDataResponse() map[string]any {
+func wizardDataResponse() map[string]any {
 	cfg := currentConfig()
 	resp := map[string]any{
 		"management_configured": cfg.ManagementKey != "",
 		"management_url":        managementBaseURL(cfg),
 		"config":                sanitizedPageConfig(cfg),
 	}
-	// 供应商列表直接通过宿主回调 host.auth.list 获取，无需任何管理密钥。
-	providers, credentials, note := listCredentials()
+	providers, credentials, note := listAllProviders(cfg.ManagementKey)
 	resp["providers"] = providers
 	resp["credentials"] = credentials
+	if strings.TrimSpace(cfg.ManagementKey) == "" {
+		note = strings.TrimSpace(note + " 插件配置未设置 management_key：config.yaml 中的 API-Key 供应商（AI 提供商页签里的大部分）暂无法列出，设置后刷新即可。")
+	}
 	if note != "" {
 		resp["providers_note"] = note
 	}
@@ -1488,9 +1563,10 @@ func configDataResponse() map[string]any {
 // sanitizedPageConfig 把当前配置裁剪成页面可用的形态（不含密钥与请求头）。
 func sanitizedPageConfig(cfg config) map[string]any {
 	out := map[string]any{
-		"enabled":  cfg.Enabled,
-		"priority": cfg.Priority,
-		"profiles": map[string]any{},
+		"enabled":   cfg.Enabled,
+		"priority":  cfg.Priority,
+		"providers": cfg.Providers,
+		"profiles":  map[string]any{},
 	}
 	profiles := map[string]any{}
 	for name, p := range cfg.Profiles {
@@ -1533,10 +1609,71 @@ func managementBaseURL(cfg config) string {
 	return "http://127.0.0.1:8317"
 }
 
-// listCredentials 通过宿主回调 host.auth.list 读取全部凭据，
+// wizardAggregate 按供应商名聚合的凭据计数与展示信息。
+type wizardAggregate struct {
+	label      string
+	active     int
+	disabled   int
+	withURL    int
+	sampleURL  string
+	credential []credentialInfo
+}
+
+// listCredentials 通过宿主回调 host.auth.list 读取凭据文件供应商，
 // 按供应商聚合并标注余额状态。带 base_url 的凭据视为第三方中转，
 // 即使 provider 名与官方厂商同名（如 openai）也按可配置处理。
 func listCredentials() ([]providerStatus, []credentialInfo, string) {
+	return listAllProviders("")
+}
+
+// listAllProviders 汇总两个来源的供应商：
+//  1. 宿主回调 host.auth.list 返回的凭据文件供应商（无需任何密钥）；
+//  2. config.yaml 里的 API-Key 供应商（gemini/claude/codex/xai/meta/
+//     interactions/vertex-api-key 与 openai-compatibility）。
+//
+// host.auth.list 只返回有凭据文件的记录，config.yaml 中的 API-Key
+// 供应商没有凭据文件，宿主会跳过它们——这正是「AI 提供商」页签
+// 能看到它们而本页看不到的原因。因此这里在有管理密钥时（页面随
+// 请求头带来，或插件配置里已保存）额外调用管理 API 读取 /config
+// 聚合补齐，让两边的供应商数量一致。
+func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo, string) {
+	order := []string{}
+	byProvider := map[string]*wizardAggregate{}
+	credentials := []credentialInfo{}
+	notes := []string{}
+	ensure := func(provider string) *wizardAggregate {
+		if entry, ok := byProvider[provider]; ok {
+			return entry
+		}
+		entry := &wizardAggregate{}
+		byProvider[provider] = entry
+		order = append(order, provider)
+		return entry
+	}
+	addCredential := func(cred credentialInfo, disabled bool) {
+		credentials = append(credentials, cred)
+		entry := ensure(cred.Provider)
+		if disabled {
+			entry.disabled++
+		} else {
+			entry.active++
+		}
+		if cred.BaseURL != "" {
+			entry.withURL++
+			if entry.sampleURL == "" {
+				entry.sampleURL = cred.BaseURL
+			}
+		}
+		if entry.label == "" {
+			entry.label = cred.Label
+			if entry.label == "" {
+				entry.label = cred.Name
+			}
+		}
+		entry.credential = append(entry.credential, cred)
+	}
+
+	// 来源 1：凭据文件（host.auth.list）。
 	raw, err := hostCallMethod("host.auth.list", nil)
 	if err != nil {
 		return []providerStatus{}, []credentialInfo{}, "无法从 CPA 读取凭据列表（host.auth.list: " + err.Error() + "）"
@@ -1554,21 +1691,6 @@ func listCredentials() ([]providerStatus, []credentialInfo, string) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return []providerStatus{}, []credentialInfo{}, "解析凭据列表失败: " + err.Error()
 	}
-	supported := map[string]struct{}{}
-	for _, name := range supportedProviders() {
-		supported[strings.ToLower(name)] = struct{}{}
-	}
-	type aggregate struct {
-		label      string
-		active     int
-		disabled   int
-		withURL    int
-		sampleURL  string
-		credential []credentialInfo
-	}
-	order := []string{}
-	byProvider := map[string]*aggregate{}
-	credentials := make([]credentialInfo, 0, len(payload.Files))
 	for _, file := range payload.Files {
 		provider := strings.ToLower(strings.TrimSpace(file.Provider))
 		baseURL := strings.TrimSpace(file.BaseURL)
@@ -1577,37 +1699,28 @@ func listCredentials() ([]providerStatus, []credentialInfo, string) {
 		if provider == "" {
 			provider = "(未命名)"
 		}
-		credentials = append(credentials, credentialInfo{
+		addCredential(credentialInfo{
 			Provider: provider, Name: name, Label: label,
 			BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
-		})
-		entry, ok := byProvider[provider]
-		if !ok {
-			entry = &aggregate{}
-			byProvider[provider] = entry
-			order = append(order, provider)
-		}
-		if file.Disabled {
-			entry.disabled++
-		} else {
-			entry.active++
-		}
-		if baseURL != "" {
-			entry.withURL++
-			if entry.sampleURL == "" {
-				entry.sampleURL = baseURL
+			Source: "file",
+		}, file.Disabled)
+	}
+
+	// 来源 2：config.yaml 中的 API-Key 供应商（需要管理密钥）。
+	if key := strings.TrimSpace(managementKey); key != "" {
+		if configCredentials, configNote := configProviderCredentials(key); len(configCredentials) > 0 || configNote != "" {
+			if configNote != "" {
+				notes = append(notes, configNote)
+			}
+			for _, cred := range configCredentials {
+				addCredential(cred, cred.Disabled)
 			}
 		}
-		if entry.label == "" {
-			entry.label = label
-			if entry.label == "" {
-				entry.label = name
-			}
-		}
-		entry.credential = append(entry.credential, credentialInfo{
-			Provider: provider, Name: name, Label: label,
-			BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
-		})
+	}
+
+	supported := map[string]struct{}{}
+	for _, name := range supportedProviders() {
+		supported[strings.ToLower(name)] = struct{}{}
 	}
 	result := make([]providerStatus, 0, len(order))
 	for _, provider := range order {
@@ -1639,7 +1752,254 @@ func listCredentials() ([]providerStatus, []credentialInfo, string) {
 		}
 		result = append(result, status)
 	}
-	return result, credentials, ""
+	return result, credentials, strings.Join(notes, " ")
+}
+
+// configProviderCredentials 通过 CPA 管理 API 读取 config.yaml 中的
+// API-Key 供应商，聚合成与凭据文件同构的凭据摘要（不含任何密钥）。
+// provider 名与 CPA 合成 auth 时使用的 Provider 字段一致
+// （openai-compatibility 的条目为 openai-compatible-<name>），
+// 保证这里展示的名字就是余额档案 profiles 需要的键。
+// configCredential 记录一条配置文件凭据。apiKey 仅在服务端内部使用，
+// 绝不出现在任何返回给页面的数据里。
+type configCredential struct {
+	Provider string
+	Name     string
+	Label    string
+	BaseURL  string
+	APIKey   string
+	Disabled bool
+}
+
+// configProviderCredentialRecords 通过 CPA 管理 API 读取 config.yaml 中的
+// API-Key 供应商凭据（含密钥，仅服务端使用）。provider 名与 CPA 合成
+// auth 时的 Provider 字段一致（openai-compatibility 条目为
+// openai-compatible-<name>），保证与余额档案 profiles 的键相同。
+func configProviderCredentialRecords(managementKey string) ([]configCredential, string) {
+	cfg := currentConfig()
+	request := httpRequest{
+		Method: http.MethodGet,
+		URL:    managementBaseURL(cfg) + "/v0/management/config",
+		Headers: map[string][]string{
+			"Authorization": {"Bearer " + managementKey},
+		},
+	}
+	response, err := callHostHTTP(request)
+	if err != nil {
+		return nil, "读取 CPA 配置文件供应商失败: " + err.Error()
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(response.Body))
+		if len(message) > 200 {
+			message = message[:200]
+		}
+		if response.StatusCode == http.StatusUnauthorized {
+			return nil, "管理密钥无效（HTTP 401），配置文件中的 API-Key 供应商未读取；请在插件配置中更新 management_key"
+		}
+		if response.StatusCode == http.StatusForbidden && strings.Contains(message, "banned") {
+			return nil, "已触发 CPA 防爆破封禁（HTTP 403，30 分钟）；配置文件中的 API-Key 供应商暂未读取"
+		}
+		return nil, fmt.Sprintf("读取 CPA 配置文件供应商失败（HTTP %d）：%s", response.StatusCode, message)
+	}
+	var payload struct {
+		GeminiKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"gemini-api-key"`
+		InteractionsKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"interactions-api-key"`
+		CodexKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"codex-api-key"`
+		XAIKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"xai-api-key"`
+		MetaKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"meta-api-key"`
+		ClaudeKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"claude-api-key"`
+		VertexKeys []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		} `json:"vertex-api-key"`
+		OpenAICompat []struct {
+			Name          string `json:"name"`
+			BaseURL       string `json:"base-url"`
+			Disabled      bool   `json:"disabled"`
+			APIKeyEntries []struct {
+				APIKey string `json:"api-key"`
+			} `json:"api-key-entries"`
+		} `json:"openai-compatibility"`
+	}
+	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return nil, "解析 CPA 配置文件供应商失败: " + err.Error()
+	}
+	credentials := []configCredential{}
+	addSimple := func(provider, label string, entries []struct {
+		APIKey  string `json:"api-key"`
+		BaseURL string `json:"base-url"`
+	}) {
+		for i, entry := range entries {
+			credentials = append(credentials, configCredential{
+				Provider: provider,
+				Name:     fmt.Sprintf("%s-%d", provider, i+1),
+				Label:    label,
+				BaseURL:  strings.TrimSpace(entry.BaseURL),
+				APIKey:   strings.TrimSpace(entry.APIKey),
+			})
+		}
+	}
+	addSimple("gemini", "Gemini API-Key（配置文件）", payload.GeminiKeys)
+	addSimple("interactions", "Interactions API-Key（配置文件）", payload.InteractionsKeys)
+	addSimple("codex", "Codex API-Key（配置文件）", payload.CodexKeys)
+	addSimple("xai", "xAI API-Key（配置文件）", payload.XAIKeys)
+	addSimple("meta", "Meta API-Key（配置文件）", payload.MetaKeys)
+	addSimple("claude", "Claude API-Key（配置文件）", payload.ClaudeKeys)
+	addSimple("vertex", "Vertex API-Key（配置文件）", payload.VertexKeys)
+	for _, compat := range payload.OpenAICompat {
+		name := strings.ToLower(strings.TrimSpace(compat.Name))
+		if name == "" {
+			name = "openai-compatibility"
+		}
+		provider := "openai-compatible-" + name
+		count := len(compat.APIKeyEntries)
+		if count == 0 {
+			count = 1 // 无密钥条目时 CPA 也会合成一条无密钥 auth，保证可路由
+		}
+		for i := 0; i < count; i++ {
+			credentials = append(credentials, configCredential{
+				Provider: provider,
+				Name:     fmt.Sprintf("%s-%d", provider, i+1),
+				Label:    strings.TrimSpace(compat.Name) + "（配置文件）",
+				BaseURL:  strings.TrimSpace(compat.BaseURL),
+				APIKey:   strings.TrimSpace(compat.APIKeyEntries[i].APIKey),
+				Disabled: compat.Disabled,
+			})
+		}
+	}
+	return credentials, ""
+}
+
+// configProviderCredentials 把配置文件凭据裁剪成向导页可展示的摘要
+// （不含任何密钥）。
+func configProviderCredentials(managementKey string) ([]credentialInfo, string) {
+	records, note := configProviderCredentialRecords(managementKey)
+	out := make([]credentialInfo, 0, len(records))
+	for _, record := range records {
+		out = append(out, credentialInfo{
+			Provider: record.Provider,
+			Name:     record.Name,
+			Label:    record.Label,
+			BaseURL:  record.BaseURL,
+			Disabled: record.Disabled,
+			Source:   "config",
+		})
+	}
+	return out, note
+}
+
+// providerCredential 查询余额所需的最小凭据信息（服务端内部使用）。
+type providerCredential struct {
+	storageJSON []byte
+	baseURL     string
+}
+
+// credentialForProvider 定位某供应商的第一条可用凭据：
+// 优先凭据文件（host.auth.list → host.auth.get），找不到且配置了
+// 管理密钥时回退到 config.yaml 的 API-Key 供应商。
+func credentialForProvider(provider string) (providerCredential, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	raw, err := hostCallMethod("host.auth.list", nil)
+	if err == nil {
+		var payload struct {
+			Files []struct {
+				Provider  string `json:"provider"`
+				AuthIndex string `json:"auth_index"`
+				Disabled  bool   `json:"disabled"`
+			} `json:"files"`
+		}
+		if json.Unmarshal(raw, &payload) == nil {
+			for _, file := range payload.Files {
+				if strings.ToLower(strings.TrimSpace(file.Provider)) != provider || file.Disabled || file.AuthIndex == "" {
+					continue
+				}
+				getRequest, _ := json.Marshal(map[string]string{"auth_index": file.AuthIndex})
+				if getRaw, err := hostCallMethod("host.auth.get", getRequest); err == nil {
+					var getResult struct {
+						JSON json.RawMessage `json:"json"`
+					}
+					if json.Unmarshal(getRaw, &getResult) == nil && len(getResult.JSON) > 0 {
+						return providerCredential{storageJSON: getResult.JSON}, nil
+					}
+				}
+			}
+		}
+	}
+	// 凭据文件未命中：回退 config.yaml 的 API-Key 供应商。
+	if key := strings.TrimSpace(currentConfig().ManagementKey); key != "" {
+		if records, _ := configProviderCredentialRecords(key); len(records) > 0 {
+			for _, record := range records {
+				if record.Provider != provider || record.Disabled || record.APIKey == "" {
+					continue
+				}
+				document, _ := json.Marshal(map[string]string{
+					"api_key":  record.APIKey,
+					"base_url": record.BaseURL,
+				})
+				return providerCredential{storageJSON: document, baseURL: record.BaseURL}, nil
+			}
+		}
+	}
+	return providerCredential{}, fmt.Errorf("未找到供应商 %q 的可用凭据", provider)
+}
+
+// providerBalanceResult 返回给向导页的单个供应商余额（不含任何密钥）。
+type providerBalanceResult struct {
+	OK          bool    `json:"ok"`
+	Description string  `json:"description,omitempty"`
+	Fraction    float64 `json:"fraction,omitempty"`
+	Message     string  `json:"message,omitempty"`
+}
+
+// fetchProviderBalance 在服务端为指定供应商执行一次余额查询，
+// 复用 quota.fetch 的完整管线（档案解析 → 自动识别 → 响应解析）。
+// 凭据（storage_json / api_key）只在本函数内部使用，不下发页面。
+func fetchProviderBalance(provider string) providerBalanceResult {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return providerBalanceResult{Message: "缺少供应商名"}
+	}
+	credential, err := credentialForProvider(provider)
+	if err != nil {
+		return providerBalanceResult{Message: err.Error()}
+	}
+	req := quotaFetchRequest{
+		Provider:    provider,
+		StorageJSON: credential.storageJSON,
+		Attributes:  map[string]string{"base_url": credential.baseURL},
+	}
+	resp, err := fetchQuotaWithSelectionGate(req, false)
+	if err != nil {
+		return providerBalanceResult{Message: err.Error()}
+	}
+	result := providerBalanceResult{OK: true}
+	if len(resp.Groups) > 0 && len(resp.Groups[0].Buckets) > 0 {
+		bucket := resp.Groups[0].Buckets[0]
+		result.Description = bucket.Description
+		result.Fraction = bucket.RemainingFraction
+	}
+	if resp.Subscription != nil && strings.TrimSpace(resp.Subscription.Plan) != "" {
+		result.Description += " · " + resp.Subscription.Plan
+	}
+	return result
 }
 
 // wizardTopLevelKeys 允许向导提交的顶层字段：控制字段 + 余额标量字段
@@ -1649,6 +2009,7 @@ var wizardTopLevelKeys = map[string]struct{}{
 	"enabled":       {},
 	"priority":      {},
 	"profiles":      {},
+	"providers":     {},
 	"vendor":        {},
 	"base_url":      {},
 	"endpoint":      {},
@@ -1728,6 +2089,12 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 				return nil, err
 			}
 			clean[key] = profiles
+		case "providers":
+			var providers []string
+			if err := json.Unmarshal(raw, &providers); err != nil {
+				return nil, errors.New("providers 必须是字符串数组")
+			}
+			clean[key] = providers
 		default:
 			var value string
 			if err := json.Unmarshal(raw, &value); err != nil {
@@ -1797,12 +2164,15 @@ func mergeWizardConfig(cfg config, clean map[string]any) (map[string]any, error)
 
 // saveConfigViaManagementAPI 接收向导页提交的配置（JSON），严格白名单过滤并
 // 与现有插件配置合并后，通过 CPA 管理 API PUT 保存并触发热加载。
+// 管理密钥优先用页面随请求头带来的（仅本次请求使用），其次用插件
+// 配置里已保存的 management_key。
 func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 	cfg := currentConfig()
-	if cfg.ManagementKey == "" {
+	key := strings.TrimSpace(cfg.ManagementKey)
+	if key == "" {
 		return map[string]any{
 			"ok":      false,
-			"message": "请先在向导中粘贴一次 CPA 管理密钥并保存（会写入插件配置 management_key，之后不再询问）",
+			"message": "保存需要 CPA 管理密钥：请在插件配置（CPA config.yaml 的 plugins.configs.api-balance）中设置 management_key 后重试",
 		}
 	}
 	clean, err := validateWizardConfig(saveJSON)
@@ -1821,7 +2191,7 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 		Method: http.MethodPut,
 		URL:    managementBaseURL(cfg) + "/v0/management/plugins/api-balance/config",
 		Headers: map[string][]string{
-			"Authorization": {"Bearer " + cfg.ManagementKey},
+			"Authorization": {"Bearer " + key},
 			"Content-Type":  {"application/json"},
 		},
 		Body: payload,
@@ -1885,19 +2255,10 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <h1>API 余额查询 · 配置向导</h1>
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 
-<div class="card" id="setupCard" style="display:none">
-<h2>保存配置用的 CPA 管理密钥（可选）</h2>
-<div class="tip">仅「保存到 CPA」时需要：粘贴 CPA 的管理密钥（管理后台登录用的那个 key），供应商列表已通过宿主自动读取，无需密钥。填错了随时回到这里重填；密钥只保存在本插件的配置里，不会显示在页面上。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
-<div class="row" style="margin-top:8px">
-  <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management key）"></div>
-  <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
-</div>
-</div>
-
 <div class="card">
-<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="loadData()">刷新</button><button class="btn" style="float:right;margin-right:6px" onclick="showKeySetup()">重设管理密钥</button></h2>
-<table><thead><tr><th style="width:26%">供应商</th><th style="width:22%">状态</th><th>说明</th><th style="width:70px">操作</th></tr></thead>
-<tbody id="provRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table>
+<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="fetchAllBalances()">查询全部余额</button><button class="btn" style="float:right;margin-right:6px" onclick="loadData()">刷新</button></h2>
+<table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
+<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table>
 <div class="tip" id="provNote"></div>
 <details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
 <div class="tip" id="credInfo"></div>
@@ -1936,21 +2297,19 @@ var PRESETS = {
 var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
 var DATA = null;
 var selected = {};
-var keySetupOpened = false;
+var displaySel = {};
+var displaySelInitialized = false;
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
-function showKeySetup(){
-  keySetupOpened = true;
-  document.getElementById("setupCard").style.display = "block";
-  document.getElementById("mgmtkey").focus();
-}
+// 余额查询完全在服务端完成：凭据与管理密钥都取自插件配置（CPA
+// config.yaml 内），页面只拿到聚合后的余额数字，接触不到任何密钥。
 function fetchTimeout(url, opts, ms){
   opts = opts || {};
   opts.signal = AbortSignal.timeout ? AbortSignal.timeout(ms || 10000) : undefined;
   return fetch(url, opts);
 }
 function loadError(text){
-  document.getElementById("provRows").innerHTML = '<tr><td colspan="4" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
+  document.getElementById("provRows").innerHTML = '<tr><td colspan="5" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
   document.getElementById("provNote").textContent = "";
 }
 function loadData(){
@@ -1961,22 +2320,19 @@ function loadData(){
   }).then(function(d){
     if (!d) return;
     DATA = d;
-    var note = d.providers_note || "";
-    if (d.management_configured && /HTTP 40[13]/.test(note)) {
-      // 密钥已保存但被 CPA 拒绝：自动展开重填入口。
-      keySetupOpened = true;
-    }
-    document.getElementById("setupCard").style.display = (!d.management_configured || keySetupOpened) ? "block" : "none";
     renderProviders(d);
     renderForms();
+    fetchSelectedBalances();
   }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); });
 }
 function renderCredentials(d){
   var list = d.credentials || [];
-  document.getElementById("credInfo").textContent = "host.auth.list 共返回 " + list.length + " 个凭据。若此处的数量与「AI 提供商」页签的配置数不一致，请把本行截图反馈给插件作者。";
+  var fromConfig = list.filter(function(c){ return c.source === "config"; }).length;
+  var text = "共 " + list.length + " 条凭据：凭据文件 " + (list.length - fromConfig) + " 条（host.auth.list），配置文件 " + fromConfig + " 条（管理 API）。若与「AI 提供商」页签的配置数不一致，请把本行截图反馈给插件作者。";
+  document.getElementById("credInfo").textContent = text;
   var rows = "";
   list.forEach(function(c){
-    rows += "<tr><td>" + esc(c.provider) + "</td><td class='tip'>" + esc(c.name || c.label || "") + "</td><td class='tip'>" + esc(c.base_url || "") + "</td><td class='tip'>" + (c.disabled ? "已停用" : "启用") + (c.runtime_only ? " · 运行时" : "") + "</td></tr>";
+    rows += "<tr><td>" + esc(c.provider) + "</td><td class='tip'>" + esc(c.name || c.label || "") + "</td><td class='tip'>" + esc(c.base_url || "") + "</td><td class='tip'>" + (c.source === "config" ? "配置文件 · " : "") + (c.disabled ? "已停用" : "启用") + (c.runtime_only ? " · 运行时" : "") + "</td></tr>";
   });
   document.getElementById("credRows").innerHTML = rows || "<tr><td colspan='4' class='tip'>（空）</td></tr>";
 }
@@ -1984,8 +2340,12 @@ function renderProviders(d){
   renderCredentials(d);
   var rows = document.getElementById("provRows");
   var list = d.providers || [];
+  if (!displaySelInitialized) {
+    displaySelInitialized = true;
+    (d.config && d.config.providers || []).forEach(function(name){ displaySel[name] = true; });
+  }
   if (!list.length) {
-    rows.innerHTML = '<tr><td colspan="4" class="tip">' + esc(d.providers_note || "未发现已配置的供应商。") + '</td></tr>';
+    rows.innerHTML = '<tr><td colspan="5" class="tip">' + esc(d.providers_note || "未发现已配置的供应商。") + '</td></tr>';
     document.getElementById("provNote").textContent = "";
     return;
   }
@@ -1996,10 +2356,12 @@ function renderProviders(d){
     else if (p.status === "unsupported") { tag = '<span class="tag no">无法查询</span>'; note = esc(p.note); }
     else { tag = '<span class="tag todo">可配置</span>'; note = esc(p.note); }
     var action = "";
+    var checked = displaySel[p.provider] ? " checked" : "";
+    action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(\'' + esc(p.provider) + '\',this.checked)"> 显示</label>';
     if (p.status === "configurable") {
-      action = '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(\'' + esc(p.provider) + '\',this.checked)"> 配置</label>';
+      action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(\'' + esc(p.provider) + '\',this.checked)"> 配置</label>';
     }
-    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '</td><td>' + tag + '</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
+    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '</td><td>' + tag + '</td><td id="bal-' + esc(p.provider) + '" class="tip">—</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
   });
   rows.innerHTML = html;
   document.getElementById("provNote").textContent = d.providers_note || "";
@@ -2007,6 +2369,36 @@ function renderProviders(d){
 function togglePick(provider, on){
   if (on) selected[provider] = true; else delete selected[provider];
   renderForms();
+}
+function toggleDisplay(provider, on){
+  if (on) displaySel[provider] = true; else delete displaySel[provider];
+  if (on) fetchBalance(provider);
+}
+function balanceCell(provider){
+  return document.getElementById("bal-" + provider);
+}
+function fetchBalance(provider){
+  var cell = balanceCell(provider);
+  if (!cell) return;
+  cell.innerHTML = '<span class="tip">查询中…</span>';
+  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if (!cell.isConnected) return;
+      if (res && res.ok) {
+        cell.innerHTML = '<b style="color:var(--ok)">' + esc(res.description || "已查询") + '</b>';
+      } else {
+        cell.innerHTML = '<span class="err">' + esc((res && res.message) || "查询失败") + '</span>';
+      }
+    })
+    .catch(function(e){ if (cell.isConnected) cell.innerHTML = '<span class="err">' + esc("查询失败：" + e.message) + '</span>'; });
+}
+function fetchSelectedBalances(){
+  Object.keys(displaySel).forEach(function(name){ fetchBalance(name); });
+}
+function fetchAllBalances(){
+  var cells = document.querySelectorAll("td[id^='bal-']");
+  for (var i = 0; i < cells.length; i++) fetchBalance(cells[i].id.slice(4));
 }
 function renderForms(){
   var box = document.getElementById("forms");
@@ -2068,6 +2460,7 @@ function collectConfig(){
     if (DATA.config.profiles) cfg.profiles = JSON.parse(JSON.stringify(DATA.config.profiles));
   } else { cfg.enabled = true; }
   if (!cfg.profiles) cfg.profiles = {};
+  cfg.providers = Object.keys(displaySel);
   Object.keys(selected).forEach(function(name){
     var box = document.getElementById("f-" + name);
     var p = {};
@@ -2091,11 +2484,6 @@ function collectConfig(){
   return cfg;
 }
 function saveAll(){
-  if (DATA && !DATA.management_configured) {
-    showKeySetup();
-    msg("保存需要 CPA 管理密钥：请在上方粘贴一次（供应商列表不受影响，已自动读取）", "err");
-    return;
-  }
   var cfg = collectConfig();
   var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
   fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
@@ -2126,33 +2514,6 @@ function toYAML(obj, indent){
     }
   }
   return lines.join("\n");
-}
-function managementErrorText(status, body){
-  var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
-  if (status === 401) return "密钥不正确（HTTP 401）。请核对 CPA config.yaml 中 remote-management secret-key 对应的原始密码后再粘贴。";
-  if (status === 403) {
-    if (/banned/i.test(detail)) return "已触发 CPA 防爆破封禁：" + detail + "。连续输错 5 次会封禁本机 IP 30 分钟，期间密钥正确也会被拒；等待封禁结束或重启 CPA 立即解除，然后再粘贴正确的密钥（只粘贴一次）。";
-    if (/disabled/i.test(detail)) return "CPA 未开启远程管理（HTTP 403）。请在 config.yaml 的 remote-management 下设置 allow-remote: true 后重试。";
-    if (/not set/i.test(detail)) return "CPA 服务端尚未设置管理密钥（HTTP 403）。请先在 config.yaml 的 remote-management.secret-key 配置。";
-    return "保存被拒绝（HTTP 403）：" + (detail || "未知原因");
-  }
-  return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
-}
-function saveKey(){
-  var key = document.getElementById("mgmtkey").value.trim();
-  if (!key) { msg("请输入管理密钥", "err"); return; }
-  fetchTimeout("/v0/management/plugins/api-balance/config", {
-    method: "PATCH",
-    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
-    body: JSON.stringify({management_key: key})
-  }, 10000).then(function(r){
-    return r.json().catch(function(){ return {}; }).then(function(body){
-      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return; }
-      msg("管理密钥已保存，正在加载供应商列表…", "ok");
-      document.getElementById("mgmtkey").value = "";
-      setTimeout(loadData, 600);
-    });
-  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); });
 }
 loadData();
 </script>

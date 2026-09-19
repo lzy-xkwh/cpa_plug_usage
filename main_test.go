@@ -728,23 +728,315 @@ func TestRegistrationMetadata(t *testing.T) {
 
 // 管理密钥填错后必须始终能重填：向导页要有重设入口，
 // 且已配置密钥但被 CPA 拒绝（401/403）时前端能自动展开重填卡片。
-func TestWizardAllowsManagementKeyReset(t *testing.T) {
+// v0.9.0 起向导不再展示「保存配置用的 CPA 管理密钥（可选）」卡片：
+// 管理密钥改为页面从同源 localStorage 自动恢复或按需弹窗输入，
+// 并仅通过请求头（X-Management-Key）随单次请求带给服务端。
+func TestWizardHasNoManagementKeyCard(t *testing.T) {
 	page := configWizardPage()
-	if !strings.Contains(page, "重设管理密钥") {
-		t.Fatal("wizard page must offer a management key reset entry")
+	if strings.Contains(page, "保存配置用的 CPA 管理密钥") {
+		t.Fatal("wizard page must not show the management key setup card")
 	}
-	if !strings.Contains(page, "showKeySetup") || !strings.Contains(page, "HTTP 40[13]") {
-		t.Fatal("wizard page must auto-reveal key setup on 401/403")
+	for _, banned := range []string{"saveKey", "showKeySetup", "recoverManagementKey", "localStorage", "prompt("} {
+		if strings.Contains(page, banned) {
+			t.Fatalf("wizard page must not keep key handling %q", banned)
+		}
+	}
+	for _, want := range []string{"fetchBalance", "toggleDisplay", "fetchSelectedBalances", "providers"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("wizard page missing %q", want)
+		}
 	}
 }
 
-// CPA 管理鉴权层对连续 5 次密钥错误触发 30 分钟 IP 封禁（403），
-// 密钥错误本身是 401。向导页必须透传 CPA 的真实原因而不是笼统提示。
-func TestWizardSurfacesManagementAuthErrors(t *testing.T) {
-	page := configWizardPage()
-	for _, want := range []string{"managementErrorText", "banned", "allow-remote"} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("wizard page missing %q guidance", want)
+// 配置文件供应商列表走服务端保存的 management_key（插件配置内），
+// 页面不参与任何密钥交互，且返回数据不得包含密钥原文。
+func TestListAllProvidersMergesConfigProviders(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: stored-key\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		switch hostMethod {
+		case "host.auth.list":
+			result, _ := json.Marshal(map[string]any{
+				"files": []map[string]any{
+					{"provider": "deepseek", "label": "DeepSeek 官方"},
+				},
+			})
+			return result, nil
+		case "host.http.do":
+			var request httpRequest
+			if err := json.Unmarshal(payload, &request); err != nil {
+				t.Fatalf("decode host.http.do payload: %v", err)
+			}
+			if !strings.HasSuffix(request.URL, "/v0/management/config") {
+				t.Fatalf("unexpected management URL %q", request.URL)
+			}
+			if got := request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer stored-key" {
+				t.Fatalf("management call missing stored key: %#v", request.Headers)
+			}
+			body, _ := json.Marshal(map[string]any{
+				"gemini-api-key": []map[string]any{
+					{"api-key": "g-key", "base-url": "https://gemini.relay.example.com"},
+				},
+				"claude-api-key": []map[string]any{
+					{"api-key": "c-key"},
+				},
+				"openai-compatibility": []map[string]any{
+					{
+						"name":     "nvidia",
+						"base-url": "https://integrate.api.nvidia.com/v1",
+						"api-key-entries": []map[string]any{
+							{"api-key": "nv-1"},
+							{"api-key": "nv-2"},
+						},
+					},
+				},
+			})
+			raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+			return raw, nil
+		default:
+			t.Fatalf("unexpected host method %s", hostMethod)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	providers, credentials, note := listAllProviders(currentConfig().ManagementKey)
+	if note != "" {
+		t.Fatalf("note = %q, want empty", note)
+	}
+	byName := map[string]providerStatus{}
+	for _, p := range providers {
+		byName[p.Provider] = p
+	}
+	if _, ok := byName["deepseek"]; !ok {
+		t.Fatalf("file provider deepseek missing: %#v", providers)
+	}
+	if byName["gemini"].Status != "configurable" {
+		t.Fatalf("gemini status = %#v, want configurable (relay base-url)", byName["gemini"])
+	}
+	if byName["claude"].Status != "unsupported" {
+		t.Fatalf("claude status = %#v, want unsupported (official)", byName["claude"])
+	}
+	if byName["openai-compatible-nvidia"].Status != "configurable" {
+		t.Fatalf("openai-compatible-nvidia = %#v, want configurable", byName["openai-compatible-nvidia"])
+	}
+	if len(credentials) != 5 {
+		t.Fatalf("credentials len = %d, want 5 (1 file + 4 config)", len(credentials))
+	}
+	for _, cred := range credentials {
+		want := "file"
+		if cred.Provider == "gemini" || cred.Provider == "claude" || cred.Provider == "openai-compatible-nvidia" {
+			want = "config"
+		}
+		if cred.Source != want {
+			t.Fatalf("credential %s source = %q, want %q", cred.Provider, cred.Source, want)
+		}
+	}
+	// 页面数据不得包含任何密钥原文。
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-data"}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	resp := decodeManagementResponse(t, raw)
+	for _, secret := range []string{"g-key", "c-key", "nv-1", "nv-2", "stored-key"} {
+		if strings.Contains(string(resp.Body), secret) {
+			t.Fatalf("config-data leaked secret %q: %s", secret, resp.Body)
+		}
+	}
+}
+
+// 管理密钥无效（401）时，供应商列表仍需展示凭据文件部分，
+// 并在 note 中解释原因，而不是让整页加载失败。
+func TestListAllProvidersSurfacesManagementAuthErrors(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: wrong-key\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		switch hostMethod {
+		case "host.auth.list":
+			result, _ := json.Marshal(map[string]any{"files": []map[string]any{
+				{"provider": "deepseek", "label": "DeepSeek 官方"},
+			}})
+			return result, nil
+		case "host.http.do":
+			raw, _ := json.Marshal(httpResponse{StatusCode: 401, Body: []byte("invalid management key")})
+			return raw, nil
+		default:
+			t.Fatalf("unexpected host method %s", hostMethod)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	providers, _, note := listAllProviders(currentConfig().ManagementKey)
+	if len(providers) != 1 {
+		t.Fatalf("providers len = %d, want 1 (file-based only)", len(providers))
+	}
+	if !strings.Contains(note, "401") {
+		t.Fatalf("note = %q, want 401 explanation", note)
+	}
+}
+
+// 保存走插件配置里已保存的 management_key（存在 CPA config.yaml 中），
+// 页面不参与密钥交互。
+func TestSaveUsesStoredManagementKey(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: stored-key\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod != "host.http.do" {
+			t.Fatalf("unexpected host method %s", hostMethod)
+		}
+		var request httpRequest
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatalf("decode host.http.do payload: %v", err)
+		}
+		if !strings.HasSuffix(request.URL, "/v0/management/plugins/api-balance/config") {
+			t.Fatalf("unexpected management URL %q", request.URL)
+		}
+		if got := request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer stored-key" {
+			t.Fatalf("save call missing stored key: %#v", request.Headers)
+		}
+		raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: []byte("ok")})
+		return raw, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard","query":{"save":["{\"enabled\":true,\"providers\":[\"openai-compatible-nvidia\"]}"]}}`))
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	resp := decodeManagementResponse(t, raw)
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("save body is not JSON: %v (%s)", err, resp.Body)
+	}
+	if ok, _ := payload["ok"].(bool); !ok {
+		t.Fatalf("save with stored key should succeed: %s", resp.Body)
+	}
+}
+
+// 向导勾选的「显示余额」名单保存后：
+// 1. supportedProviders 只声明名单内的供应商；
+// 2. 未勾选供应商的 quota.fetch 被拒绝；
+// 3. 勾选供应商即使没有档案也能经自动识别完成余额查询。
+func TestProvidersSelectionGatesQuota(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nproviders:\n  - openai-compatible-nvidia\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	supported := supportedProviders()
+	found := false
+	for _, name := range supported {
+		if name == "openai-compatible-nvidia" {
+			found = true
+		}
+		if name == "deepseek" {
+			t.Fatalf("unselected vendor %q must not be declared", name)
+		}
+	}
+	if !found {
+		t.Fatalf("selected provider missing from supported providers: %v", supported)
+	}
+
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod != "host.http.do" {
+			t.Fatalf("unexpected host method %s", hostMethod)
+		}
+		var request httpRequest
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatalf("decode host.http.do payload: %v", err)
+		}
+		if !strings.Contains(request.URL, "https://relay.example.com") {
+			t.Fatalf("unexpected balance endpoint %q", request.URL)
+		}
+		body, _ := json.Marshal(map[string]any{
+			"data": map[string]any{"total_available": "12.5", "total_granted": "100", "total_used": "87.5"},
+		})
+		raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+		return raw, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+
+	_, err := fetchQuota(quotaFetchRequest{Provider: "deepseek"})
+	if err == nil || !strings.Contains(err.Error(), "未选择显示余额") {
+		t.Fatalf("unselected provider quota.fetch error = %v, want selection gate", err)
+	}
+
+	// 勾选的供应商：无档案也能通过 base_url 自动识别（new-api 站点）。
+	resp, err := fetchQuotaWithSelectionGate(quotaFetchRequest{
+		Provider:    "openai-compatible-nvidia",
+		StorageJSON: []byte(`{"api_key":"nv-1","base_url":"https://relay.example.com/v1"}`),
+		Attributes:  map[string]string{"base_url": "https://relay.example.com/v1"},
+	}, false)
+	if err != nil {
+		t.Fatalf("selected provider quota.fetch error = %v", err)
+	}
+	if !strings.Contains(resp.Groups[0].Buckets[0].Description, "12.5") {
+		t.Fatalf("balance description = %q, want 12.5", resp.Groups[0].Buckets[0].Description)
+	}
+}
+
+// 向导的 ?balance= 端点在服务端完成取数：凭据文件优先，
+// 找不到时回退配置文件 API-Key 供应商；结果不含任何密钥。
+func TestFetchProviderBalanceUsesCredentials(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\nmanagement_key: stored-key\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		switch hostMethod {
+		case "host.auth.list":
+			// 该供应商只有配置文件凭据，凭据文件列表为空。
+			result, _ := json.Marshal(map[string]any{"files": []map[string]any{}})
+			return result, nil
+		case "host.http.do":
+			var request httpRequest
+			if err := json.Unmarshal(payload, &request); err != nil {
+				t.Fatalf("decode host.http.do payload: %v", err)
+			}
+			if strings.HasSuffix(request.URL, "/v0/management/config") {
+				if got := request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer stored-key" {
+					t.Fatalf("management call missing stored key: %#v", request.Headers)
+				}
+				body, _ := json.Marshal(map[string]any{
+					"openai-compatibility": []map[string]any{
+						{
+							"name":            "nvidia",
+							"base-url":        "https://relay.example.com/v1",
+							"api-key-entries": []map[string]any{{"api-key": "nv-1"}},
+						},
+					},
+				})
+				raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+				return raw, nil
+			}
+			if !strings.Contains(request.URL, "https://relay.example.com") {
+				t.Fatalf("unexpected balance endpoint %q", request.URL)
+			}
+			if got := request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer nv-1" {
+				t.Fatalf("balance call missing api key from config credential: %#v", request.Headers)
+			}
+			body, _ := json.Marshal(map[string]any{
+				"data": map[string]any{"total_available": "66.6", "total_granted": "100", "total_used": "33.4"},
+			})
+			raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+			return raw, nil
+		default:
+			t.Fatalf("unexpected host method %s", hostMethod)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	result := fetchProviderBalance("openai-compatible-nvidia")
+	if !result.OK || !strings.Contains(result.Description, "66.6") {
+		t.Fatalf("fetchProviderBalance() = %#v, want balance 66.6", result)
+	}
+	raw, _ := json.Marshal(result)
+	for _, secret := range []string{"nv-1", "stored-key"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("balance result leaked secret %q: %s", secret, raw)
 		}
 	}
 }

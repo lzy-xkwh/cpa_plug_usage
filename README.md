@@ -274,15 +274,21 @@ plugins:
 入口：管理后台 **插件 → api-balance → 「余额」**（或直接访问
 `/v0/resource/plugins/api-balance/config-wizard`）。
 
-- **供应商列表零密钥自动读取**：通过宿主回调 `host.auth.list` 直接获取
-  CPA 已配置的全部供应商，并标注状态：
-  - ✅ **已支持**：余额已在供应商页签显示，无需任何配置；
-  - ❌ **无法查询**：OpenAI / Claude / Gemini 等官方没有公开余额接口；
-  - ⚠️ **可配置**：勾选 → 选厂商类型（字段自动带出）→ 保存；
-- 「保存到 CPA」时才需要粘贴一次 CPA 管理密钥（写入插件配置
-  `management_key`，之后不再询问；密钥不下发到页面）；**填错了随时点
-  「重设管理密钥」重填**——密钥被 CPA 拒绝（401/403）时向导也会自动展开
-  重填入口；也可在插件配置 YAML 中直接写 `management_key`；
+- **供应商列表与「AI 提供商」页签一致，并直接显示余额**：
+  - 凭据文件供应商通过宿主回调 `host.auth.list` 零密钥自动读取；
+  - config.yaml 里的 API-Key 供应商（gemini / claude / codex / xai / meta /
+    interactions / vertex-api-key 与 openai-compatibility）没有凭据文件，
+    宿主回调会跳过它们，因此插件会在配置了 `management_key` 时自动调用
+    管理 API 读取 `config` 补齐，两边数量保持一致；
+  - 每行都有**余额**列：点「查询全部余额」或勾选「显示」即由服务端完成
+    实际余额查询（复用 quota.fetch 管线，自动识别 one-api / new-api /
+    sub2api 等站点类型），页面只看到聚合后的数字；
+- **自由选择显示余额的供应商**：勾选每行的「显示」并「保存到 CPA」，
+  名单写入插件配置 `providers`。名单非空时 CPA 只会把勾选供应商的余额
+  查询路由给本插件，未勾选的完全不打扰；
+- **页面零密钥交互**：v0.9.0 起不再有「保存配置用的 CPA 管理密钥」卡片，
+  管理密钥只放在插件配置 `management_key` 中（保存在 CPA 的 config.yaml
+  里），凭据与密钥都只在服务端使用，页面拿到的永远只有余额数字；
 - 可选 `management_url`：CPA 服务地址，默认 `http://127.0.0.1:8317`（仅保存
   时使用）；
 - 「仅生成 YAML」按钮保留给喜欢手动维护配置的用户。
