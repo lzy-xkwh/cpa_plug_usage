@@ -376,6 +376,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}), nil
 	case "management.register":
 		return okEnvelope(map[string]any{
+			"routes": []map[string]any{
+				{
+					"method":      http.MethodPost,
+					"path":        "/plugins/api-balance/config-wizard/key",
+					"description": "通过当前 CPA/CPAMP 管理认证保存插件连接信息",
+				},
+				{
+					"method":      http.MethodPatch,
+					"path":        "/plugins/api-balance/config-wizard/key",
+					"description": "通过当前 CPA/CPAMP 管理认证保存插件连接信息",
+				},
+			},
 			"resources": []map[string]any{
 				{
 					"path":        "/config-wizard",
@@ -401,7 +413,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.3",
+			Version:          "0.9.4",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1428,10 +1440,11 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 // ---------- 管理后台：配置向导 ----------
 
 type managementRPCRequest struct {
-	Method string              `json:"method"`
-	Path   string              `json:"path"`
-	Query  map[string][]string `json:"query"`
-	Body   []byte              `json:"body"`
+	Method  string              `json:"method"`
+	Path    string              `json:"path"`
+	Headers map[string][]string `json:"headers"`
+	Query   map[string][]string `json:"query"`
+	Body    []byte              `json:"body"`
 }
 
 func firstQuery(query map[string][]string, key string) string {
@@ -1439,6 +1452,89 @@ func firstQuery(query map[string][]string, key string) string {
 		return values[0]
 	}
 	return ""
+}
+
+func firstHeader(headers map[string][]string, names ...string) string {
+	for _, name := range names {
+		for key, values := range headers {
+			if strings.EqualFold(key, name) && len(values) > 0 {
+				return strings.TrimSpace(values[0])
+			}
+		}
+	}
+	return ""
+}
+
+func managementKeyFromHeaders(headers map[string][]string) string {
+	raw := firstHeader(headers, "Authorization")
+	if len(raw) >= len("Bearer ") && strings.EqualFold(raw[:len("Bearer ")], "Bearer ") {
+		return strings.TrimSpace(raw[len("Bearer "):])
+	}
+	if raw != "" {
+		return raw
+	}
+	return firstHeader(headers, "X-Management-Key")
+}
+
+func saveKeyViaManagementRequest(req managementRPCRequest) map[string]any {
+	key := managementKeyFromHeaders(req.Headers)
+	if key == "" {
+		return map[string]any{
+			"ok":      false,
+			"message": "请求未携带管理认证。CPAMP 页面请输入 CPAMP 管理员密钥；直接访问 CPA 页面请输入 CPA Management Key。",
+		}
+	}
+	var input struct {
+		ManagementURL string `json:"management_url"`
+	}
+	if len(bytes.TrimSpace(req.Body)) > 0 {
+		if err := json.Unmarshal(req.Body, &input); err != nil {
+			return map[string]any{"ok": false, "message": "解析 CPA 地址失败: " + err.Error()}
+		}
+	}
+	cfg := currentConfig()
+	managementURL := strings.TrimSpace(input.ManagementURL)
+	if managementURL == "" {
+		managementURL = managementBaseURL(cfg)
+	}
+	parsed, err := validateManagementURL(managementURL)
+	if err != nil {
+		return map[string]any{"ok": false, "message": err.Error()}
+	}
+	cfg.ManagementKey = key
+	cfg.ManagementURL = strings.TrimRight(parsed.String(), "/")
+	clean := map[string]any{
+		"management_key": cfg.ManagementKey,
+		"management_url": cfg.ManagementURL,
+	}
+	merged, err := mergeWizardConfig(currentConfig(), clean)
+	if err != nil {
+		return map[string]any{"ok": false, "message": err.Error()}
+	}
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return map[string]any{"ok": false, "message": "配置编码失败: " + err.Error()}
+	}
+	response, err := callHostHTTP(httpRequest{
+		Method:  http.MethodPut,
+		URL:     cfg.ManagementURL + "/v0/management/plugins/api-balance/config",
+		Headers: managementHeaders(key, "application/json"),
+		Body:    payload,
+	})
+	if err != nil {
+		return map[string]any{"ok": false, "message": "调用 CPA 管理 API 失败: " + err.Error()}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(response.Body))
+		if message == "" {
+			message = "管理 API 未返回错误详情"
+		}
+		return map[string]any{"ok": false, "message": fmt.Sprintf("保存失败（HTTP %d）：%s", response.StatusCode, message)}
+	}
+	configMu.Lock()
+	runtimeConfig = cfg
+	configMu.Unlock()
+	return map[string]any{"ok": true, "message": "CPA 连接已保存，正在刷新供应商列表。"}
 }
 
 // handleManagementRPC 处理宿主转发的插件管理/资源请求：
@@ -1451,6 +1547,16 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 	var req managementRPCRequest
 	if err := json.Unmarshal(request, &req); err != nil {
 		return nil, fmt.Errorf("解析管理请求失败: %w", err)
+	}
+	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/config-wizard/key") {
+		if req.Method != http.MethodPost && req.Method != http.MethodPatch {
+			return okEnvelope(managementTextResponse(http.StatusMethodNotAllowed, "text/plain; charset=utf-8", []byte("本接口仅支持 POST 或 PATCH 请求"))), nil
+		}
+		payload, err := json.Marshal(saveKeyViaManagementRequest(req))
+		if err != nil {
+			return nil, fmt.Errorf("编码管理认证保存结果失败: %w", err)
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if provider := firstQuery(req.Query, "balance"); provider != "" {
 		payload, err := json.Marshal(fetchProviderBalance(provider))
@@ -2272,10 +2378,11 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">仅拉取配置文件供应商及「保存到 CPA」时需要：粘贴 CPA 管理密钥的<strong>原始明文</strong>，对应 config.yaml 的 <code>remote-management.secret-key</code>；不要粘贴 CPA 启动后自动写回的 bcrypt 哈希，也不要粘贴普通 API Key。密钥仅保存在服务端插件配置中，不会下发给页面。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 约 30 分钟），期间密钥正确也会报 403；若已触发，等待解封或重启 CPA 后只重试一次。</b></div>
+<div class="tip">你使用的是 CPAMP Full/Manager 页面时，这里的“当前页面管理密钥”填写 CPAMP 登录用的管理员密钥；CPAMP 会在服务端把它换成已保存的 CPA Management Key，插件不会保存 <code>cpamp_...</code>。如果直接访问 CPA 的管理页面，则填写 CPA 配置 <code>remote-management.secret-key</code> 的原始明文。下面的 CPA 地址必须是 CPAMP 服务端或插件所在环境能够访问的 CPA 地址，例如 <code>http://192.168.1.2:8137</code>，不能填 CPAMP 的 <code>:18317</code>。密钥只在服务端处理，不会返回页面。<b style="color:var(--err)">连续认证失败 5 次可能触发 CPA 临时封禁；确认地址和密钥后只提交一次。</b></div>
 <div class="row" style="margin-top:8px">
-  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="remote-management.secret-key 的原始明文"></div>
-  <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存密钥</button></div>
+  <div style="flex:2"><input id="cpaurl" type="url" autocomplete="off" placeholder="CPA 地址，例如 http://192.168.1.2:8137"></div>
+  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="当前页面管理密钥：CPAMP 管理员密钥或 CPA Management Key"></div>
+  <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存连接</button></div>
 </div>
 </div>
 
@@ -2351,25 +2458,31 @@ function managementErrorText(status, body){
 }
 function saveKey(){
   var key = document.getElementById("mgmtkey").value.trim();
+  var cpaURL = document.getElementById("cpaurl").value.trim();
   var button = document.getElementById("saveKeyBtn");
-  if (!key) { msg("请输入管理密钥", "err"); return; }
+  if (!cpaURL) { msg("请输入 CPA 地址，例如 http://192.168.1.2:8137", "err"); return; }
+  if (!key) { msg("请输入当前页面管理密钥", "err"); return; }
   setBusy(button, true, "保存中…");
-  msg("正在验证管理密钥并保存…", "");
-  fetchTimeout("/v0/management/plugins/api-balance/config", {
-    // 管理 API 对单字段更新使用 PATCH；保存完整向导配置时服务端才使用 PUT。
-    method: "PATCH",
+  msg("正在通过当前页面认证保存 CPA 连接…", "");
+  fetchTimeout("/v0/management/plugins/api-balance/config-wizard/key", {
+    method: "POST",
     headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key, "X-Management-Key": key},
-    body: JSON.stringify({management_key: key})
-  }, 10000).then(function(r){
+    body: JSON.stringify({management_url: cpaURL})
+  }, 15000).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(body){
-      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return false; }
-      msg("管理密钥已保存，正在刷新供应商列表…", "ok");
+      if (!r.ok || !body.result || body.result.ok === false) {
+        var status = r.status || 500;
+        var result = body.result || body;
+        msg(managementErrorText(status, result), "err");
+        return false;
+      }
+      msg((body.result && body.result.message) || "CPA 连接已保存，正在刷新供应商列表…", "ok");
       document.getElementById("mgmtkey").value = "";
       keySetupOpened = false;
       setTimeout(function(){ loadData(); }, 600);
       return true;
     });
-  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); })
+  }).catch(function(e){ msg("保存 CPA 连接失败：" + e.message, "err"); })
     .then(function(){ setBusy(button, false); });
 }
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -2414,6 +2527,8 @@ function loadData(button){
   }).then(function(d){
     if (!d) return;
     DATA = d;
+    var urlInput = document.getElementById("cpaurl");
+    if (urlInput && d.management_url && !urlInput.value) urlInput.value = d.management_url;
     var note = d.providers_note || "";
     if (d.management_configured && /HTTP 40[13]/.test(note)) {
       keySetupOpened = true;

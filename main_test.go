@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -414,6 +415,83 @@ func TestManagementRegisterAndHandle(t *testing.T) {
 	}
 }
 
+func TestManagementRegisterIncludesProxySetupRoute(t *testing.T) {
+	raw, err := handleMethod("management.register", nil)
+	if err != nil {
+		t.Fatalf("management.register error = %v", err)
+	}
+	for _, want := range []string{"config-wizard/key", `"method":"POST"`, `"method":"PATCH"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("register response missing %q: %s", want, raw)
+		}
+	}
+}
+
+func TestProxySetupSavesEffectiveCPAKeyAndCustomPort(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod != "host.http.do" {
+			t.Fatalf("unexpected host method %s", hostMethod)
+		}
+		var request httpRequest
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatalf("decode host.http.do payload: %v", err)
+		}
+		if request.URL != "http://192.168.1.2:8137/v0/management/plugins/api-balance/config" {
+			t.Fatalf("request URL = %q", request.URL)
+		}
+		if got := request.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer cpa-effective-key" {
+			t.Fatalf("Authorization = %#v", request.Headers["Authorization"])
+		}
+		var saved map[string]any
+		if err := json.Unmarshal(request.Body, &saved); err != nil {
+			t.Fatalf("decode saved config: %v", err)
+		}
+		if saved["management_key"] != "cpa-effective-key" || saved["management_url"] != "http://192.168.1.2:8137" {
+			t.Fatalf("saved credentials = %#v", saved)
+		}
+		response, _ := json.Marshal(httpResponse{StatusCode: 200})
+		return response, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	request, _ := json.Marshal(managementRPCRequest{
+		Method:  http.MethodPost,
+		Path:    "/v0/management/plugins/api-balance/config-wizard/key",
+		Headers: map[string][]string{"Authorization": {"Bearer cpa-effective-key"}},
+		Body:    []byte(`{"management_url":"http://192.168.1.2:8137"}`),
+	})
+	raw, err := handleMethod("management.handle", request)
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	response := decodeManagementResponse(t, raw)
+	var result map[string]any
+	if err := json.Unmarshal(response.Body, &result); err != nil {
+		t.Fatalf("decode setup result: %v", err)
+	}
+	if result["ok"] != true || currentConfig().ManagementKey != "cpa-effective-key" || currentConfig().ManagementURL != "http://192.168.1.2:8137" {
+		t.Fatalf("setup result/config = %#v / %#v", result, currentConfig())
+	}
+}
+
+func TestProxySetupRejectsMissingAuthentication(t *testing.T) {
+	request, _ := json.Marshal(managementRPCRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/api-balance/config-wizard/key",
+		Body:   []byte(`{"management_url":"http://192.168.1.2:8137"}`),
+	})
+	raw, err := handleMethod("management.handle", request)
+	if err != nil {
+		t.Fatalf("management.handle error = %v", err)
+	}
+	response := decodeManagementResponse(t, raw)
+	if !strings.Contains(string(response.Body), "请求未携带管理认证") {
+		t.Fatalf("missing auth response = %s", response.Body)
+	}
+}
 func TestManagementKeyScalarAccepted(t *testing.T) {
 	if err := applyConfig([]byte("enabled: true\nmanagement_key: sk-test-123\nmanagement_url: http://127.0.0.1:9999\n")); err != nil {
 		t.Fatalf("applyConfig() error = %v", err)
@@ -737,7 +815,7 @@ func TestWizardAllowsManagementKeySetup(t *testing.T) {
 	}
 }
 
-func TestWizardActionsExposeVisibleFeedbackAndUsePatch(t *testing.T) {
+func TestWizardActionsExposeVisibleFeedbackAndUseProxySetupRoute(t *testing.T) {
 	page := configWizardPage()
 	for _, want := range []string{
 		`id="globalMsg" role="status"`,
@@ -746,7 +824,10 @@ func TestWizardActionsExposeVisibleFeedbackAndUsePatch(t *testing.T) {
 		`function setBusy`,
 		`msg("正在刷新供应商列表…", "")`,
 		`msg("供应商列表已刷新", "ok")`,
-		`method: "PATCH"`,
+		`method: "POST"`,
+		`/v0/management/plugins/api-balance/config-wizard/key`,
+		`Authorization": "Bearer " + key`,
+		`management_url`,
 		`typeof AbortSignal !== "undefined"`,
 	} {
 		if !strings.Contains(page, want) {
@@ -754,7 +835,7 @@ func TestWizardActionsExposeVisibleFeedbackAndUsePatch(t *testing.T) {
 		}
 	}
 	if strings.Contains(page, `method: "PUT"`) {
-		t.Fatal("wizard key save must use PATCH so the existing plugin config is preserved")
+		t.Fatal("wizard key save must use the dedicated proxy setup route")
 	}
 }
 

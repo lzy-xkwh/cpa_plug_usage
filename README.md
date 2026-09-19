@@ -287,7 +287,9 @@ plugins:
   名单写入插件配置 `providers`。名单非空时 CPA 只会把勾选供应商的余额
   查询路由给本插件，未勾选的完全不打扰；
 - **便捷管理密钥设置**：
-  - 未设置管理密钥时，向导顶部自动展开「设置 / 重设 CPA 管理密钥」卡片。填写 CPA 配置中 `remote-management.secret-key` 的**原始明文**，不要填写 CPA 启动后写回的 bcrypt 哈希，也不要填写普通 API Key；保存后会写入插件自己的 `management_key` 字段，无需手写 YAML；
+  - CPAMP Full/Manager 模式（例如 CPAMP `192.168.1.30:18317`）下，向导的“当前页面管理密钥”填写 CPAMP 管理员密钥。CPAMP 会在服务端用已保存的 CPA Management Key 访问插件设置路由，插件只保存 CPA Key，不会把 `cpamp_...` 管理员密钥写入 `management_key`；
+  - 直接访问 CPA 管理页面时，填写 CPA 配置中 `remote-management.secret-key` 的**原始明文**，不要填写 CPA 启动后写回的 bcrypt 哈希或普通 API Key；
+  - 向导同时要求填写 CPA 地址。你的 CPA 如果监听在 `http://192.168.1.2:8137`，这里填写该地址；不要填写 CPAMP 的 `:18317`。CPA 地址必须是插件运行环境或 CPAMP 服务端可访问的地址；
   - 也可在 CPA 后台「插件管理 → api-balance → 配置」表单中直接填写 `management_key` 与 `management_url`；
   - 密钥仅在服务端使用，绝不下发给页面，页面展示的永远只有脱敏凭据与聚合余额数字；
 - 可选 `management_url`：CPA 管理 API 服务地址，默认 `http://127.0.0.1:8317`（仅保存
