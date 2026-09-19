@@ -728,23 +728,56 @@ func TestRegistrationMetadata(t *testing.T) {
 
 // 管理密钥填错后必须始终能重填：向导页要有重设入口，
 // 且已配置密钥但被 CPA 拒绝（401/403）时前端能自动展开重填卡片。
-// v0.9.0 起向导不再展示「保存配置用的 CPA 管理密钥（可选）」卡片：
-// 管理密钥改为页面从同源 localStorage 自动恢复或按需弹窗输入，
-// 并仅通过请求头（X-Management-Key）随单次请求带给服务端。
-func TestWizardHasNoManagementKeyCard(t *testing.T) {
+func TestWizardAllowsManagementKeySetup(t *testing.T) {
 	page := configWizardPage()
-	if strings.Contains(page, "保存配置用的 CPA 管理密钥") {
-		t.Fatal("wizard page must not show the management key setup card")
-	}
-	for _, banned := range []string{"saveKey", "showKeySetup", "recoverManagementKey", "localStorage", "prompt("} {
-		if strings.Contains(page, banned) {
-			t.Fatalf("wizard page must not keep key handling %q", banned)
-		}
-	}
-	for _, want := range []string{"fetchBalance", "toggleDisplay", "fetchSelectedBalances", "providers"} {
+	for _, want := range []string{"setupCard", "saveKey", "toggleKeySetup", "showKeySetup", "managementErrorText", "fetchBalance", "toggleDisplay", "fetchSelectedBalances", "providers"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("wizard page missing %q", want)
 		}
+	}
+}
+
+func TestConfigFieldsIncludeManagementKey(t *testing.T) {
+	reg := pluginRegistrationResponse()
+	var foundKey, foundURL bool
+	for _, f := range reg.Metadata.ConfigFields {
+		if f.Name == "management_key" {
+			foundKey = true
+		}
+		if f.Name == "management_url" {
+			foundURL = true
+		}
+	}
+	if !foundKey || !foundURL {
+		t.Fatalf("ConfigFields missing management_key or management_url: %#v", reg.Metadata.ConfigFields)
+	}
+}
+
+func TestConfigProviderCredentialRecordsEmptyEntriesSafe(t *testing.T) {
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod == "host.http.do" {
+			body, _ := json.Marshal(map[string]any{
+				"openai-compatibility": []map[string]any{
+					{
+						"name":            "empty-keys",
+						"base-url":        "https://example.com/v1",
+						"api-key-entries": []map[string]any{},
+					},
+				},
+			})
+			raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+			return raw, nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	records, note := configProviderCredentialRecords("dummy-key")
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if len(records) != 1 || records[0].APIKey != "" {
+		t.Fatalf("expected 1 record with empty APIKey, got %#v", records)
 	}
 }
 

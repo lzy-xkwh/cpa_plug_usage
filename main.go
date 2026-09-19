@@ -401,12 +401,14 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.0",
+			Version:          "0.9.1",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
 				{Name: "enabled", Type: "boolean", Description: "是否启用余额查询。"},
 				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
+				{Name: "management_key", Type: "string", Description: "CPA 管理密钥（config.yaml 中的 management-key），用于读取配置文件中的 API-Key 供应商及保存配置。"},
+				{Name: "management_url", Type: "string", Description: "可选，CPA 服务管理接口地址，默认 http://127.0.0.1:8317。"},
 				{Name: "vendor", Type: "enum", Description: "内置厂商预设，自动填充接口地址与余额路径；显式配置的字段优先。custom 表示完全自定义。", EnumValues: vendorNames},
 				{Name: "endpoint", Type: "string", Description: "余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符；vendor 预设已含官方地址，仅自定义时填写。"},
 				{Name: "used_endpoint", Type: "string", Description: "可选，已用额度的独立查询地址（如 one-api 系的 billing/usage）；留空则从主响应中取已用额度。"},
@@ -1875,12 +1877,16 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 			count = 1 // 无密钥条目时 CPA 也会合成一条无密钥 auth，保证可路由
 		}
 		for i := 0; i < count; i++ {
+			var apiKey string
+			if i < len(compat.APIKeyEntries) {
+				apiKey = strings.TrimSpace(compat.APIKeyEntries[i].APIKey)
+			}
 			credentials = append(credentials, configCredential{
 				Provider: provider,
 				Name:     fmt.Sprintf("%s-%d", provider, i+1),
 				Label:    strings.TrimSpace(compat.Name) + "（配置文件）",
 				BaseURL:  strings.TrimSpace(compat.BaseURL),
-				APIKey:   strings.TrimSpace(compat.APIKeyEntries[i].APIKey),
+				APIKey:   apiKey,
 				Disabled: compat.Disabled,
 			})
 		}
@@ -2255,8 +2261,17 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <h1>API 余额查询 · 配置向导</h1>
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 
+<div class="card" id="setupCard" style="display:none">
+<h2>设置 / 重设 CPA 管理密钥</h2>
+<div class="tip">仅拉取配置文件供应商及「保存到 CPA」时需要：粘贴 CPA 的管理密钥（config.yaml 中的 management-key，即管理后台登录密码）。设置后向导即可自动读取全部 40+ 个配置文件供应商并直接显示余额。密钥仅保存在服务端插件配置中，不会下发给页面。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
+<div class="row" style="margin-top:8px">
+  <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management-key）"></div>
+  <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
+</div>
+</div>
+
 <div class="card">
-<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="fetchAllBalances()">查询全部余额</button><button class="btn" style="float:right;margin-right:6px" onclick="loadData()">刷新</button></h2>
+<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="fetchAllBalances()">查询全部余额</button><button class="btn" style="float:right;margin-right:6px" onclick="loadData()">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
 <table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table>
 <div class="tip" id="provNote"></div>
@@ -2299,6 +2314,45 @@ var DATA = null;
 var selected = {};
 var displaySel = {};
 var displaySelInitialized = false;
+var keySetupOpened = false;
+function toggleKeySetup(){
+  keySetupOpened = !keySetupOpened;
+  document.getElementById("setupCard").style.display = keySetupOpened ? "block" : "none";
+  if (keySetupOpened) document.getElementById("mgmtkey").focus();
+}
+function showKeySetup(){
+  keySetupOpened = true;
+  document.getElementById("setupCard").style.display = "block";
+  document.getElementById("mgmtkey").focus();
+}
+function managementErrorText(status, body){
+  var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
+  if (status === 401) return "密钥不正确（HTTP 401）。请核对 CPA config.yaml 中 management-key 对应的原始密码后再粘贴。";
+  if (status === 403) {
+    if (/banned/i.test(detail)) return "已触发 CPA 防爆破封禁：" + detail + "。连续输错 5 次会封禁本机 IP 30 分钟，期间密钥正确也会被拒；等待封禁结束或重启 CPA 立即解除，然后再粘贴正确的密钥（只粘贴一次）。";
+    if (/disabled/i.test(detail)) return "CPA 未开启远程管理（HTTP 403）。请在 config.yaml 的 remote-management 下设置 allow-remote: true 后重试。";
+    if (/not set/i.test(detail)) return "CPA 服务端尚未设置管理密钥（HTTP 403）。请先在 config.yaml 中配置 management-key。";
+    return "保存被拒绝（HTTP 403）：" + (detail || "未知原因");
+  }
+  return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
+}
+function saveKey(){
+  var key = document.getElementById("mgmtkey").value.trim();
+  if (!key) { msg("请输入管理密钥", "err"); return; }
+  fetchTimeout("/v0/management/plugins/api-balance/config", {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
+    body: JSON.stringify({management_key: key})
+  }, 10000).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(body){
+      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return; }
+      msg("管理密钥已保存，正在加载供应商列表…", "ok");
+      document.getElementById("mgmtkey").value = "";
+      keySetupOpened = false;
+      setTimeout(loadData, 600);
+    });
+  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); });
+}
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
 // 余额查询完全在服务端完成：凭据与管理密钥都取自插件配置（CPA
@@ -2320,6 +2374,11 @@ function loadData(){
   }).then(function(d){
     if (!d) return;
     DATA = d;
+    var note = d.providers_note || "";
+    if (d.management_configured && /HTTP 40[13]/.test(note)) {
+      keySetupOpened = true;
+    }
+    document.getElementById("setupCard").style.display = (!d.management_configured || keySetupOpened) ? "block" : "none";
     renderProviders(d);
     renderForms();
     fetchSelectedBalances();
@@ -2484,6 +2543,11 @@ function collectConfig(){
   return cfg;
 }
 function saveAll(){
+  if (DATA && !DATA.management_configured) {
+    showKeySetup();
+    msg("保存需要 CPA 管理密钥：请在上方设置管理密钥后重试", "err");
+    return;
+  }
   var cfg = collectConfig();
   var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
   fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
