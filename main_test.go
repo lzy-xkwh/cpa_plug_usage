@@ -758,6 +758,36 @@ func TestWizardActionsExposeVisibleFeedbackAndUsePatch(t *testing.T) {
 	}
 }
 
+func TestManagementHeadersSupportCPAAuthSchemes(t *testing.T) {
+	headers := managementHeaders("plain-secret", "application/json")
+	if got := headers["Authorization"]; len(got) != 1 || got[0] != "Bearer plain-secret" {
+		t.Fatalf("Authorization header = %#v", headers["Authorization"])
+	}
+	if got := headers["X-Management-Key"]; len(got) != 1 || got[0] != "plain-secret" {
+		t.Fatalf("X-Management-Key header = %#v", headers["X-Management-Key"])
+	}
+	if got := headers["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Fatalf("Content-Type header = %#v", headers["Content-Type"])
+	}
+}
+
+func TestWizardExplainsCPASecretKeyFormat(t *testing.T) {
+	page := configWizardPage()
+	for _, want := range []string{
+		"remote-management.secret-key",
+		"bcrypt",
+		"remote-management.allow-remote",
+		"X-Management-Key",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("wizard page missing diagnostic %q", want)
+		}
+	}
+	if strings.Contains(page, "config.yaml 中的 management-key") {
+		t.Fatal("wizard still refers to the obsolete management-key config name")
+	}
+}
+
 func TestConfigFieldsIncludeManagementKey(t *testing.T) {
 	reg := pluginRegistrationResponse()
 	var foundKey, foundURL bool

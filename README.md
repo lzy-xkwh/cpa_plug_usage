@@ -287,11 +287,12 @@ plugins:
   名单写入插件配置 `providers`。名单非空时 CPA 只会把勾选供应商的余额
   查询路由给本插件，未勾选的完全不打扰；
 - **便捷管理密钥设置**：
-  - 未设置管理密钥时，向导顶部自动展开「设置 / 重设 CPA 管理密钥」卡片，粘贴 CPA 登录密码保存即可（自动写入服务端插件配置 `management_key`，无需手写 YAML）；
+  - 未设置管理密钥时，向导顶部自动展开「设置 / 重设 CPA 管理密钥」卡片。填写 CPA 配置中 `remote-management.secret-key` 的**原始明文**，不要填写 CPA 启动后写回的 bcrypt 哈希，也不要填写普通 API Key；保存后会写入插件自己的 `management_key` 字段，无需手写 YAML；
   - 也可在 CPA 后台「插件管理 → api-balance → 配置」表单中直接填写 `management_key` 与 `management_url`；
   - 密钥仅在服务端使用，绝不下发给页面，页面展示的永远只有脱敏凭据与聚合余额数字；
-- 可选 `management_url`：CPA 服务地址，默认 `http://127.0.0.1:8317`（仅保存
-  时使用）；
+- 可选 `management_url`：CPA 管理 API 服务地址，默认 `http://127.0.0.1:8317`（仅保存
+  时使用）。如果浏览器与 CPA 不在同一台机器，需要 CPA 配置
+  `remote-management.allow-remote: true`；
 - 「仅生成 YAML」按钮保留给喜欢手动维护配置的用户。
 
 ## 自动识别（零配置优先）
@@ -441,9 +442,14 @@ Cookie，可把 `credential_header` 改为 `Cookie`、`credential_prefix` 改为
 
 ## CPA 查询入口
 
-启用后，CPA 会把插件注册为 `api-balance` quota provider（同时声明支持
-`deepseek`、`moonshot` 凭据与自定义 `api-balance` 凭据）。可通过 CPA
-管理 API 的 quota 查询入口读取：
+启用后，CPA 会把插件注册为 `api-balance` quota provider。余额查询分两段：
+
+1. CPA 先通过插件协议调用 `quota.fetch`；插件再通过宿主的 `host.http.do` 桥接发起上游 HTTP 请求，因此插件本身不监听余额服务端口。
+2. 上游地址由供应商配置决定：官方预设使用固定地址；one-api / New API / sub2api 使用凭据中的 `base_url` 拼接路径；自定义站点使用 `endpoint`。这些地址才是实际余额 API 地址。
+
+管理密钥相关请求访问的是 CPA 管理 API，默认地址为 `http://127.0.0.1:8317`，例如读取配置使用 `GET /v0/management/config`，保存插件配置使用 `PUT /v0/management/plugins/api-balance/config`。`management_url` 只用于这类管理 API 请求，与供应商余额接口地址无关。
+
+可通过 CPA 管理 API 的 quota 查询入口读取：
 
 ```text
 POST /v0/management/quota/fetch

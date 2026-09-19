@@ -401,13 +401,13 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.2",
+			Version:          "0.9.3",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
 				{Name: "enabled", Type: "boolean", Description: "是否启用余额查询。"},
 				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
-				{Name: "management_key", Type: "string", Description: "CPA 管理密钥（config.yaml 中的 management-key），用于读取配置文件中的 API-Key 供应商及保存配置。"},
+				{Name: "management_key", Type: "string", Description: "CPA 管理密钥：填写 remote-management.secret-key 的原始明文（不是 CPA 启动后写回配置的 bcrypt 哈希）；本插件配置字段名为 management_key，用于读取配置文件中的 API-Key 供应商及保存配置。"},
 				{Name: "management_url", Type: "string", Description: "可选，CPA 服务管理接口地址，默认 http://127.0.0.1:8317。"},
 				{Name: "vendor", Type: "enum", Description: "内置厂商预设，自动填充接口地址与余额路径；显式配置的字段优先。custom 表示完全自定义。", EnumValues: vendorNames},
 				{Name: "endpoint", Type: "string", Description: "余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符；vendor 预设已含官方地址，仅自定义时填写。"},
@@ -1604,6 +1604,17 @@ func profileToPage(p config) map[string]any {
 	return m
 }
 
+func managementHeaders(key string, contentType string) map[string][]string {
+	headers := map[string][]string{
+		"Authorization":    {"Bearer " + key},
+		"X-Management-Key": {key},
+	}
+	if contentType != "" {
+		headers["Content-Type"] = []string{contentType}
+	}
+	return headers
+}
+
 func managementBaseURL(cfg config) string {
 	if cfg.ManagementURL != "" {
 		return strings.TrimRight(cfg.ManagementURL, "/")
@@ -1780,11 +1791,9 @@ type configCredential struct {
 func configProviderCredentialRecords(managementKey string) ([]configCredential, string) {
 	cfg := currentConfig()
 	request := httpRequest{
-		Method: http.MethodGet,
-		URL:    managementBaseURL(cfg) + "/v0/management/config",
-		Headers: map[string][]string{
-			"Authorization": {"Bearer " + managementKey},
-		},
+		Method:  http.MethodGet,
+		URL:     managementBaseURL(cfg) + "/v0/management/config",
+		Headers: managementHeaders(managementKey, ""),
 	}
 	response, err := callHostHTTP(request)
 	if err != nil {
@@ -2194,13 +2203,10 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 		return map[string]any{"ok": false, "message": "配置编码失败: " + err.Error()}
 	}
 	request := httpRequest{
-		Method: http.MethodPut,
-		URL:    managementBaseURL(cfg) + "/v0/management/plugins/api-balance/config",
-		Headers: map[string][]string{
-			"Authorization": {"Bearer " + key},
-			"Content-Type":  {"application/json"},
-		},
-		Body: payload,
+		Method:  http.MethodPut,
+		URL:     managementBaseURL(cfg) + "/v0/management/plugins/api-balance/config",
+		Headers: managementHeaders(key, "application/json"),
+		Body:    payload,
 	}
 	response, err := callHostHTTP(request)
 	if err != nil {
@@ -2266,9 +2272,9 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">仅拉取配置文件供应商及「保存到 CPA」时需要：粘贴 CPA 的管理密钥（config.yaml 中的 management-key，即管理后台登录密码）。设置后向导即可自动读取全部 40+ 个配置文件供应商并直接显示余额。密钥仅保存在服务端插件配置中，不会下发给页面。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
+<div class="tip">仅拉取配置文件供应商及「保存到 CPA」时需要：粘贴 CPA 管理密钥的<strong>原始明文</strong>，对应 config.yaml 的 <code>remote-management.secret-key</code>；不要粘贴 CPA 启动后自动写回的 bcrypt 哈希，也不要粘贴普通 API Key。密钥仅保存在服务端插件配置中，不会下发给页面。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 约 30 分钟），期间密钥正确也会报 403；若已触发，等待解封或重启 CPA 后只重试一次。</b></div>
 <div class="row" style="margin-top:8px">
-  <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management-key）"></div>
+  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="remote-management.secret-key 的原始明文"></div>
   <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存密钥</button></div>
 </div>
 </div>
@@ -2330,12 +2336,16 @@ function showKeySetup(){
 }
 function managementErrorText(status, body){
   var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
-  if (status === 401) return "密钥不正确（HTTP 401）。请核对 CPA config.yaml 中 management-key 对应的原始密码后再粘贴。";
+  var lower = detail.toLowerCase();
+  if (status === 401) {
+    if (/bcrypt|hash|compare|invalid management key/.test(lower)) return "CPA 拒绝了管理密钥（HTTP 401）。请填写 remote-management.secret-key 启动前配置的原始明文，不要填写 CPA 自动写回的 bcrypt 哈希、普通 API Key 或插件 management_key 字段名。";
+    return "管理密钥校验失败（HTTP 401）。请核对 CPA config.yaml 的 remote-management.secret-key 原始明文；配置中的 bcrypt 哈希不能反向还原为密码。";
+  }
   if (status === 403) {
-    if (/banned/i.test(detail)) return "已触发 CPA 防爆破封禁：" + detail + "。连续输错 5 次会封禁本机 IP 30 分钟，期间密钥正确也会被拒；等待封禁结束或重启 CPA 立即解除，然后再粘贴正确的密钥（只粘贴一次）。";
-    if (/disabled/i.test(detail)) return "CPA 未开启远程管理（HTTP 403）。请在 config.yaml 的 remote-management 下设置 allow-remote: true 后重试。";
-    if (/not set/i.test(detail)) return "CPA 服务端尚未设置管理密钥（HTTP 403）。请先在 config.yaml 中配置 management-key。";
-    return "保存被拒绝（HTTP 403）：" + (detail || "未知原因");
+    if (/banned|ban|temporar/.test(lower)) return "已触发 CPA 防爆破封禁：连续认证失败后本机 IP 会临时封禁约 30 分钟，期间即使密钥正确也会返回 403。等待解封或重启 CPA 后，只粘贴一次 remote-management.secret-key 的原始明文。";
+    if (/disabled|remote/.test(lower)) return "CPA 拒绝了远程管理（HTTP 403）。若浏览器与 CPA 不在同一台机器，请在 CPA 配置中设置 remote-management.allow-remote: true；本机访问通常不需要开启此项。";
+    if (/not set|secret.key|management key/.test(lower)) return "CPA 尚未启用管理 API（HTTP 403）。请在 remote-management.secret-key 设置管理密钥后重启 CPA，再输入该原始明文。";
+    return "保存被拒绝（HTTP 403）：" + (detail || "请检查 remote-management.allow-remote 与 secret-key 配置");
   }
   return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
 }
@@ -2348,7 +2358,7 @@ function saveKey(){
   fetchTimeout("/v0/management/plugins/api-balance/config", {
     // 管理 API 对单字段更新使用 PATCH；保存完整向导配置时服务端才使用 PUT。
     method: "PATCH",
-    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
+    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key, "X-Management-Key": key},
     body: JSON.stringify({management_key: key})
   }, 10000).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(body){
