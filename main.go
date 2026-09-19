@@ -2253,25 +2253,28 @@ th{color:var(--mu);font-weight:500;font-size:12px}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
 textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
-#msg{font-size:12px;margin-left:8px}
+#msg,#globalMsg{font-size:12px;margin-left:8px}
+#globalMsg{display:block;min-height:18px;margin:8px 0 0}
+.btn:disabled{opacity:.6;cursor:wait}
 .ok{color:var(--ok)}.err{color:var(--err)}
 </style>
 </head>
 <body><div class="wrap">
 <h1>API 余额查询 · 配置向导</h1>
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
+<div id="globalMsg" role="status" aria-live="polite"></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
 <div class="tip">仅拉取配置文件供应商及「保存到 CPA」时需要：粘贴 CPA 的管理密钥（config.yaml 中的 management-key，即管理后台登录密码）。设置后向导即可自动读取全部 40+ 个配置文件供应商并直接显示余额。密钥仅保存在服务端插件配置中，不会下发给页面。<b style="color:var(--err)">注意：连续输错 5 次会触发 CPA 防爆破封禁（本机 IP 30 分钟），期间密钥正确也会报 403；若已触发，等待 30 分钟或重启 CPA 后再填。</b></div>
 <div class="row" style="margin-top:8px">
   <div style="flex:2"><input id="mgmtkey" type="password" placeholder="CPA 管理密钥（config.yaml 中的 management-key）"></div>
-  <div><button class="btn primary" onclick="saveKey()">保存密钥</button></div>
+  <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存密钥</button></div>
 </div>
 </div>
 
 <div class="card">
-<h2>① 已配置供应商的余额状态 <button class="btn" style="float:right" onclick="fetchAllBalances()">查询全部余额</button><button class="btn" style="float:right;margin-right:6px" onclick="loadData()">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
+<h2>① 已配置供应商的余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
 <table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table>
 <div class="tip" id="provNote"></div>
@@ -2338,39 +2341,66 @@ function managementErrorText(status, body){
 }
 function saveKey(){
   var key = document.getElementById("mgmtkey").value.trim();
+  var button = document.getElementById("saveKeyBtn");
   if (!key) { msg("请输入管理密钥", "err"); return; }
+  setBusy(button, true, "保存中…");
+  msg("正在验证管理密钥并保存…", "");
   fetchTimeout("/v0/management/plugins/api-balance/config", {
+    // 管理 API 对单字段更新使用 PATCH；保存完整向导配置时服务端才使用 PUT。
     method: "PATCH",
     headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
     body: JSON.stringify({management_key: key})
   }, 10000).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(body){
-      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return; }
-      msg("管理密钥已保存，正在加载供应商列表…", "ok");
+      if (!r.ok) { msg(managementErrorText(r.status, body), "err"); return false; }
+      msg("管理密钥已保存，正在刷新供应商列表…", "ok");
       document.getElementById("mgmtkey").value = "";
       keySetupOpened = false;
-      setTimeout(loadData, 600);
+      setTimeout(function(){ loadData(); }, 600);
+      return true;
     });
-  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); });
+  }).catch(function(e){ msg("保存密钥失败：" + e.message, "err"); })
+    .then(function(){ setBusy(button, false); });
 }
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function msg(text, cls){ var m = document.getElementById("msg"); m.textContent = text; m.className = cls || ""; }
+function msg(text, cls){
+  ["globalMsg", "msg"].forEach(function(id){
+    var m = document.getElementById(id);
+    if (m) { m.textContent = text || ""; m.className = cls || ""; }
+  });
+}
+function setBusy(button, busy, label){
+  if (!button) return;
+  if (busy) {
+    button.dataset.originalLabel = button.textContent;
+    button.textContent = label || "处理中…";
+    button.disabled = true;
+  } else {
+    button.textContent = button.dataset.originalLabel || button.textContent;
+    button.disabled = false;
+  }
+}
 // 余额查询完全在服务端完成：凭据与管理密钥都取自插件配置（CPA
 // config.yaml 内），页面只拿到聚合后的余额数字，接触不到任何密钥。
 function fetchTimeout(url, opts, ms){
   opts = opts || {};
-  opts.signal = AbortSignal.timeout ? AbortSignal.timeout(ms || 10000) : undefined;
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    opts.signal = AbortSignal.timeout(ms || 10000);
+  }
   return fetch(url, opts);
 }
 function loadError(text){
   document.getElementById("provRows").innerHTML = '<tr><td colspan="5" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
   document.getElementById("provNote").textContent = "";
+  msg(text, "err");
 }
-function loadData(){
+function loadData(button){
+  setBusy(button, true, "刷新中…");
+  msg("正在刷新供应商列表…", "");
   fetchTimeout("/v0/resource/plugins/api-balance/config-data", {}, 10000).then(function(r){
     if (r.status === 404) { loadError("数据端点不存在（404）：当前运行的插件还是旧版本。请到 插件商店 把 api-balance 更新到最新版，然后刷新本页。"); return null; }
     if (!r.ok) { loadError("加载数据失败（HTTP " + r.status + "），请刷新重试。"); return null; }
-    return r.json();
+    return r.json().catch(function(){ throw new Error("服务器返回的不是有效 JSON"); });
   }).then(function(d){
     if (!d) return;
     DATA = d;
@@ -2382,7 +2412,9 @@ function loadData(){
     renderProviders(d);
     renderForms();
     fetchSelectedBalances();
-  }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); });
+    msg("供应商列表已刷新", "ok");
+  }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); })
+    .then(function(){ setBusy(button, false); });
 }
 function renderCredentials(d){
   var list = d.credentials || [];
@@ -2438,26 +2470,38 @@ function balanceCell(provider){
 }
 function fetchBalance(provider){
   var cell = balanceCell(provider);
-  if (!cell) return;
+  if (!cell) return Promise.resolve();
   cell.innerHTML = '<span class="tip">查询中…</span>';
-  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
-    .then(function(r){ return r.json(); })
-    .then(function(res){
+  return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(res){ return {httpOK:r.ok, body:res}; }); })
+    .then(function(result){
       if (!cell.isConnected) return;
-      if (res && res.ok) {
+      var res = result.body;
+      if (result.httpOK && res && res.ok) {
         cell.innerHTML = '<b style="color:var(--ok)">' + esc(res.description || "已查询") + '</b>';
       } else {
-        cell.innerHTML = '<span class="err">' + esc((res && res.message) || "查询失败") + '</span>';
+        cell.innerHTML = '<span class="err">' + esc((res && res.message) || (result.httpOK ? "查询失败" : "HTTP 请求失败")) + '</span>';
       }
     })
     .catch(function(e){ if (cell.isConnected) cell.innerHTML = '<span class="err">' + esc("查询失败：" + e.message) + '</span>'; });
 }
 function fetchSelectedBalances(){
-  Object.keys(displaySel).forEach(function(name){ fetchBalance(name); });
+  return Promise.all(Object.keys(displaySel).map(function(name){ return fetchBalance(name); }));
 }
-function fetchAllBalances(){
+function fetchAllBalances(button){
   var cells = document.querySelectorAll("td[id^='bal-']");
-  for (var i = 0; i < cells.length; i++) fetchBalance(cells[i].id.slice(4));
+  if (!cells.length) { msg("当前没有可查询的供应商", ""); return; }
+  setBusy(button, true, "查询中…");
+  msg("正在查询 " + cells.length + " 个供应商余额…", "");
+  var requests = [];
+  for (var i = 0; i < cells.length; i++) requests.push(fetchBalance(cells[i].id.slice(4)));
+  Promise.all(requests).then(function(){
+    msg("余额查询完成，结果已更新", "ok");
+    setBusy(button, false);
+  }, function(e){
+    msg("余额查询失败：" + e.message, "err");
+    setBusy(button, false);
+  });
 }
 function renderForms(){
   var box = document.getElementById("forms");

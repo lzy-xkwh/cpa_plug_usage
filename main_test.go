@@ -737,6 +737,27 @@ func TestWizardAllowsManagementKeySetup(t *testing.T) {
 	}
 }
 
+func TestWizardActionsExposeVisibleFeedbackAndUsePatch(t *testing.T) {
+	page := configWizardPage()
+	for _, want := range []string{
+		`id="globalMsg" role="status"`,
+		`id="saveKeyBtn"`,
+		`id="refreshBtn"`,
+		`function setBusy`,
+		`msg("正在刷新供应商列表…", "")`,
+		`msg("供应商列表已刷新", "ok")`,
+		`method: "PATCH"`,
+		`typeof AbortSignal !== "undefined"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("wizard page missing action safeguard %q", want)
+		}
+	}
+	if strings.Contains(page, `method: "PUT"`) {
+		t.Fatal("wizard key save must use PATCH so the existing plugin config is preserved")
+	}
+}
+
 func TestConfigFieldsIncludeManagementKey(t *testing.T) {
 	reg := pluginRegistrationResponse()
 	var foundKey, foundURL bool
