@@ -2341,40 +2341,50 @@ const wizardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>api-balance 余额配置向导</title>
 <style>
-:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706}
+:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--soft:#eff6ff}
 *{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
 body{margin:0;background:var(--bg);color:var(--tx)}
-.wrap{max-width:820px;margin:0 auto;padding:24px 16px 64px}
+.wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
 h1{font-size:20px;margin:0 0 4px}
 .sub{color:var(--mu);font-size:13px;margin-bottom:20px}
 .card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
 .card h2{font-size:15px;margin:0 0 10px}
+.overview{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 14px}
+.metric{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;min-width:0}
+.metric .value{font-size:22px;font-weight:700;line-height:1.2}
+.metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
+.metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
 label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
 input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
 .row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
-.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px}
+.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
 .btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
-th{color:var(--mu);font-weight:500;font-size:12px}
-.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
-.tag.ok{background:#dcfce7;color:var(--ok)}
-.tag.no{background:#fee2e2;color:var(--err)}
-.tag.todo{background:#fef3c7;color:var(--warn)}
+.table-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
+.tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
 .configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
 textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
-#msg,#globalMsg{font-size:12px;margin-left:8px}
-#globalMsg{display:block;min-height:18px;margin:8px 0 0}
-.btn:disabled{opacity:.6;cursor:wait}
-.ok{color:var(--ok)}.err{color:var(--err)}
+#msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
+.btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
+@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}}
+
 </style>
 </head>
 <body><div class="wrap">
 <h1>API 余额查询 · 配置向导</h1>
 <div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
 <div id="globalMsg" role="status" aria-live="polite"></div>
+<div class="overview" aria-label="余额概览">
+ <div class="metric info"><div class="value" id="metricTotal">—</div><div class="label">已发现供应商</div></div>
+ <div class="metric ok"><div class="value" id="metricSupported">—</div><div class="label">可直接查询</div></div>
+ <div class="metric warn"><div class="value" id="metricTodo">—</div><div class="label">需要配置</div></div>
+ <div class="metric"><div class="value" id="metricQueried">0</div><div class="label">本次已查询</div></div>
+</div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -2388,8 +2398,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="card">
 <h2>① 已配置供应商的余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
-<table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
-<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table>
+<div class="table-scroll"><table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
+<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
 <div class="tip" id="provNote"></div>
 <details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
 <div class="tip" id="credInfo"></div>
@@ -2430,7 +2440,22 @@ var DATA = null;
 var selected = {};
 var displaySel = {};
 var displaySelInitialized = false;
+var queried = {};
 var keySetupOpened = false;
+function updateOverview(list){
+  list = list || (DATA && DATA.providers) || [];
+  var supported = 0, todo = 0;
+  list.forEach(function(p){ if (p.status === "ok") supported++; if (p.status === "configurable") todo++; });
+  var total = document.getElementById("metricTotal");
+  var direct = document.getElementById("metricSupported");
+  var pending = document.getElementById("metricTodo");
+  var done = document.getElementById("metricQueried");
+  if (total) total.textContent = list.length;
+  if (direct) direct.textContent = supported;
+  if (pending) pending.textContent = todo;
+  if (done) done.textContent = Object.keys(queried).length;
+}
+
 function toggleKeySetup(){
   keySetupOpened = !keySetupOpened;
   document.getElementById("setupCard").style.display = keySetupOpened ? "block" : "none";
@@ -2556,6 +2581,8 @@ function renderProviders(d){
   renderCredentials(d);
   var rows = document.getElementById("provRows");
   var list = d.providers || [];
+  updateOverview(list);
+
   if (!displaySelInitialized) {
     displaySelInitialized = true;
     (d.config && d.config.providers || []).forEach(function(name){ displaySel[name] = true; });
@@ -2596,19 +2623,25 @@ function balanceCell(provider){
 function fetchBalance(provider){
   var cell = balanceCell(provider);
   if (!cell) return Promise.resolve();
-  cell.innerHTML = '<span class="tip">查询中…</span>';
+  cell.innerHTML = '<span class="tag todo">查询中</span>';
   return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
     .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(res){ return {httpOK:r.ok, body:res}; }); })
     .then(function(result){
       if (!cell.isConnected) return;
       var res = result.body;
+      queried[provider] = true;
+      updateOverview();
       if (result.httpOK && res && res.ok) {
-        cell.innerHTML = '<b style="color:var(--ok)">' + esc(res.description || "已查询") + '</b>';
+        cell.innerHTML = '<span class="tag ok">' + esc(res.description || "查询成功") + '</span>' + '<div class="tip">刚刚更新</div>';
       } else {
-        cell.innerHTML = '<span class="err">' + esc((res && res.message) || (result.httpOK ? "查询失败" : "HTTP 请求失败")) + '</span>';
+        cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc((res && res.message) || (result.httpOK ? "请检查配置" : "HTTP 请求失败")) + '</div>';
       }
     })
-    .catch(function(e){ if (cell.isConnected) cell.innerHTML = '<span class="err">' + esc("查询失败：" + e.message) + '</span>'; });
+    .catch(function(e){
+      queried[provider] = true;
+      updateOverview();
+      if (cell.isConnected) cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc(e.message) + '</div>';
+    });
 }
 function fetchSelectedBalances(){
   return Promise.all(Object.keys(displaySel).map(function(name){ return fetchBalance(name); }));
