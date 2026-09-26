@@ -4,10 +4,10 @@
     {
       "id": "api-balance",
       "name": "供应商余额",
-      "description": "自动查询各供应商与中转站余额并在 CPA 供应商页签展示：支持 DeepSeek、Kimi、OpenRouter、one-api / New API / sub2api 系站点；零配置自动识别、供应商列表与余额直读、可勾选显示名单、管理后台内置中文配置向导（官方无余额接口的供应商会明确标注）。",
+      "description": "按账号/站点独立查询余额与用量：支持 DeepSeek、Kimi、OpenRouter、one-api / New API / sub2api 系站点；同一 provider 的多站点可分别配置，显示选择可持久化，并提供总览统计与每日快照。",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
-      "version": "0.9.6",
+      "version": "0.9.7",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
@@ -27,14 +27,14 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.6/api-balance_0.9.6_linux_amd64.zip",
-            "sha256": "d312f66d6528ee32dd2b216b6b3354a2f991fb016cde57f7da921d8f9250a15a"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.7/api-balance_0.9.7_linux_amd64.zip",
+            "sha256": "cdde9f9f9974f654f46cba42b00448bf1196833de77697d71a5557d93f2e1b71"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.6/api-balance_0.9.6_linux_arm64.zip",
-            "sha256": "22aa33b95b794f638c8a765e83528e82add9b691276c593b02457a9b0ef59dc5"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.7/api-balance_0.9.7_linux_arm64.zip",
+            "sha256": "8fbb562e255cb623fbe77090ddbc5e4788dc12f7f4b5f1895e32dc3e429f6ab7"
           }
         ]
       },

@@ -265,6 +265,7 @@ function storageGet(key, fallback){
 function storageSet(key, value){ try { if (window.localStorage) localStorage.setItem(key, JSON.stringify(value)); } catch(e) {} }
 function storageRemove(key){ try { if (window.localStorage) localStorage.removeItem(key); } catch(e) {} }
 function nowISO(){ return new Date().toISOString(); }
+function localDay(date){ var d=date||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function accountText(c){ return [c.provider,c.label,c.name,c.base_url].join(" ").toLowerCase(); }
 function resultCurrency(r){ return String((r && r.currency) || "").trim().toUpperCase(); }
 function knownNumber(v){ return v !== undefined && v !== null && v !== "" && isFinite(Number(v)); }
@@ -311,7 +312,7 @@ function snapshotKey(){ return "api-balance-daily-v2"; }
 function snapshotItems(){ var x=storageGet(snapshotKey(),[]); return Array.isArray(x)?x:[]; }
 function recordSnapshot(key, result){
   if (!result || !result.ok) return;
-  var currency=resultCurrency(result), day=new Date().toISOString().slice(0,10), at=nowISO(), items=snapshotItems();
+  var currency=resultCurrency(result), day=localDay(), at=nowISO(), items=snapshotItems();
   var idx=-1;
   items.forEach(function(x,i){if(x.key===key && x.day===day && String(x.currency||"").toUpperCase()===currency)idx=i;});
   var used=knownNumber(result.used)?Number(result.used):null, balance=knownNumber(result.balance)?Number(result.balance):null;
@@ -422,7 +423,7 @@ function renderProviderRows(){
     var tag = p.status === "ok" ? '<span class="tag ok">可查询</span>' : p.status === "unsupported" ? '<span class="tag no">不支持</span>' : '<span class="tag todo">待配置</span>';
     var key = p.key, checked = displaySel[key] ? " checked" : "";
     var action = '<label class="check"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(' + jsArg(key) + ',this.checked)"> 显示</label>';
-    if (p.status !== "ok") action += '<label class="check"><input type="checkbox" style="width:auto"' + (selected[key] ? " checked" : "") + ' onchange="togglePick(' + jsArg(key) + ',this.checked)"> 配置</label>';
+    action += '<label class="check"><input type="checkbox" style="width:auto"' + (selected[key] ? " checked" : "") + ' onchange="togglePick(' + jsArg(key) + ',this.checked)"> 配置</label>';
     var site = p.base_url || "无站点地址（无法自动判断余额接口）";
     html += '<tr><td><b>' + esc(p.provider) + '</b><div class="tip">' + esc(p.label || p.name || "账号") + '</div></td><td>' + esc(site) + '</td><td>' + tag + '<div class="tip">' + esc(p.note) + '</div></td><td id="bal-' + domKey(key) + '" class="tip">—</td><td>' + action + '</td></tr>';
   });
@@ -495,7 +496,7 @@ function renderForms(){
     applyProfile(key);
     var box=document.getElementById("f-"+domKey(key));
     if(!profile.base_url && c.base_url) box.querySelector(".f-base").value=c.base_url;
-    if(!profile.vendor && PRESETS[c.provider]) { box.querySelector(".f-vendor").value=c.provider; preset(key); if(c.base_url) box.querySelector(".f-base").value=c.base_url; }
+    if(!profile.vendor) { box.querySelector(".f-vendor").value=PRESETS[c.provider] ? c.provider : "custom"; preset(key); if(c.base_url) box.querySelector(".f-base").value=c.base_url; }
     if(draft) applyDraft(key,draft);
   });
 }
