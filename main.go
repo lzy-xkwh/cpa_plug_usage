@@ -422,7 +422,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.8",
+			Version:          "0.9.9",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1430,8 +1430,18 @@ func expandEndpoint(endpoint string, baseURL string, req quotaFetchRequest) stri
 	if baseURL == "" {
 		baseURL = requestBaseURL
 	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	// CPA's OpenAI-compatible base URL often ends in /v1. Preset billing
+	// routes start at the site root, whereas custom routes may need /v1.
+	for _, vendor := range autoProbeStrategies {
+		preset := vendorPresets[vendor]
+		if endpoint == preset.Endpoint || endpoint == preset.UsedEndpoint {
+			baseURL = strings.TrimSuffix(baseURL, "/v1")
+			break
+		}
+	}
 	return strings.NewReplacer(
-		"{base_url}", strings.TrimRight(baseURL, "/"),
+		"{base_url}", baseURL,
 		"{provider}", req.Provider,
 		"{auth_id}", req.AuthID,
 		"{auth_index}", req.AuthIndex,

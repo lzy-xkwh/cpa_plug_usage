@@ -84,3 +84,61 @@ test('in-flight requests are deduplicated and failures are cached', async () => 
   assert.equal(result.ok, false);
   assert.equal(context.balanceCache['deepseek@a'].message, 'mock failure');
 });
+
+test('selected account table ignores unselected accounts and escapes labels', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[
+    {provider:'deepseek', profile_key:'a', label:'<account>', base_url:'https://a.test'},
+    {provider:'moonshot', profile_key:'b', label:'hidden'}
+  ], config:{}};
+  context.displaySel = {a:true};
+  context.balanceCache.a = {ok:true, balance:12.5, currency:'CNY'};
+  context.renderSelectedBalances();
+  assert.match(element('selectedRows').innerHTML, /&lt;account&gt;/);
+  assert.doesNotMatch(element('selectedRows').innerHTML, /hidden/);
+  assert.match(element('selected-bal-a').innerHTML, /CNY 12.5/);
+  assert.equal(element('selected-bal-a').innerHTML, element('bal-a').innerHTML);
+  context.toggleDisplay('a', false);
+  assert.match(element('selectedRows').innerHTML, /尚未选择账号/);
+});
+
+test('manual refresh queries only existing selected accounts and bypasses cached balances', async () => {
+  const calls = [];
+  const {context, element} = loadWizard({fetch: async url => {
+    calls.push(url);
+    return {ok:true, json:async () => ({ok:true, balance:9, currency:'USD'})};
+  }});
+  context.DATA = {providers:[], credentials:[
+    {provider:'deepseek', profile_key:'a'}, {provider:'moonshot', profile_key:'b'}
+  ], config:{}};
+  context.displaySel = {a:true, deleted:true};
+  context.balanceCache.a = {ok:true, balance:1, currency:'USD'};
+  const button = element('selectedBalancesBtn');
+  button.textContent = '刷新余额';
+  const pending = context.fetchSelectedBalances(button);
+  assert.equal(button.disabled, true);
+  assert.match(element('selected-bal-a').innerHTML, /查询中/);
+  await pending;
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /credential_key=a/);
+  assert.equal(context.balanceCache.a.balance, 9);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, '刷新余额');
+  assert.match(element('selected-bal-a').innerHTML, /USD 9/);
+});
+
+test('manual refresh reports per-account failure and handles empty selection', async () => {
+  const {context, element} = loadWizard({fetch: async () => {
+    throw new Error('offline');
+  }});
+  context.DATA = {providers:[], credentials:[{provider:'deepseek', profile_key:'a'}], config:{}};
+  const button = element('selectedBalancesBtn');
+  button.textContent = '刷新余额';
+  await context.fetchSelectedBalances(button);
+  assert.match(element('globalMsg').textContent, /尚未选择账号/);
+  context.displaySel = {a:true};
+  await context.fetchSelectedBalances(button);
+  assert.equal(button.disabled, false);
+  assert.equal(element('globalMsg').className, 'err');
+  assert.match(element('selected-bal-a').innerHTML, /offline/);
+});

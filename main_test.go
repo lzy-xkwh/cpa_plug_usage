@@ -171,6 +171,31 @@ func TestExpandEndpointBaseURLPrecedence(t *testing.T) {
 	if got != "https://from-auth.example.com/v1/x" {
 		t.Fatalf("expandEndpoint() fallback = %q", got)
 	}
+	got = expandEndpoint("{base_url}/v1/dashboard/billing/usage", "https://relay.example.com/v1", quotaFetchRequest{})
+	if got != "https://relay.example.com/v1/dashboard/billing/usage" {
+		t.Fatalf("expandEndpoint() must remove duplicated /v1 = %q", got)
+	}
+	got = expandEndpoint("{base_url}/api/usage/token/", "https://relay.example.com/v1", quotaFetchRequest{})
+	if got != "https://relay.example.com/api/usage/token/" {
+		t.Fatalf("expandEndpoint() must remove /v1 before /api = %q", got)
+	}
+	for _, vendor := range autoProbeStrategies {
+		preset := vendorPresets[vendor]
+		req := quotaFetchRequest{CredentialKey: "account", Attributes: map[string]string{"base_url": "https://relay.example.com/proxy/v1/"}}
+		for _, endpoint := range []string{preset.Endpoint, preset.UsedEndpoint} {
+			if endpoint == "" {
+				continue
+			}
+			want := strings.ReplaceAll(endpoint, "{base_url}", "https://relay.example.com/proxy")
+			if got := expandEndpoint(endpoint, "https://other.example.com", req); got != want {
+				t.Fatalf("%s: expandEndpoint() = %q, want %q", vendor, got, want)
+			}
+		}
+	}
+	got = expandEndpoint("{base_url}/balance", "https://relay.example.com/v1", quotaFetchRequest{})
+	if got != "https://relay.example.com/v1/balance" {
+		t.Fatalf("custom endpoint changed: %q", got)
+	}
 }
 
 func TestDecodeConfigVisualCredentialPaths(t *testing.T) {

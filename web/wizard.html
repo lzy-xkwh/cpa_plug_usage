@@ -26,12 +26,14 @@ input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius
 .row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
 .btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
+.selected-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 6px}.selected-head h3{font-size:14px;margin:0}
 .table-scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
 th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
 th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
 .tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
 .tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
+.balance-detail{white-space:normal;overflow-wrap:anywhere;line-height:1.6}td{overflow-wrap:anywhere}
 .quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
 .configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
@@ -71,6 +73,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 
 <div class="card" id="accountPanel"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
+<div class="selected-head"><h3>已选择账号余额</h3><button class="btn" id="selectedBalancesBtn" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">刷新余额</button></div>
+<div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div>
 <div class="filterbar">
  <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
  <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
@@ -429,6 +433,15 @@ function renderProviderRows(){
   });
   rows.innerHTML = html || '<tr><td colspan="5" class="tip">没有匹配的账号/站点</td></tr>';
   filtered.forEach(function(p){ if (balanceCache[p.key]) renderBalanceResult(p.key, balanceCache[p.key]); });
+  renderSelectedBalances();
+}
+function renderSelectedBalances(){
+  var list=credentialRows().filter(function(c){ return displaySel[c.key]; });
+  var rows=document.getElementById("selectedRows");
+  rows.innerHTML=list.length?list.map(function(c){
+    return '<tr><td><b>'+esc(c.provider)+'</b><div class="tip">'+esc(c.label||c.name||"账号")+'</div></td><td>'+esc(c.base_url||"—")+'</td><td id="selected-bal-'+domKey(c.key)+'" class="tip">—</td></tr>';
+  }).join(""):'<tr><td colspan="3" class="tip">尚未选择账号，请在下方勾选「显示」。</td></tr>';
+  list.forEach(function(c){ if(balanceCache[c.key]) renderBalanceResult(c.key,balanceCache[c.key]); });
 }
 
 function togglePick(key,on){
@@ -436,20 +449,22 @@ function togglePick(key,on){
 }
 function toggleDisplay(key,on){
   if(on) displaySel[key]=true; else delete displaySel[key]; storageSet("api-balance-display-v1",Object.keys(displaySel));
+  renderSelectedBalances();
   if(on) fetchBalance(key); if(document.getElementById("view-overview").style.display!=="none") renderSummary();
 }
-function balanceCell(key){ return document.getElementById("bal-" + domKey(key)); }
+function balanceCells(key){ return ["bal-","selected-bal-"].map(function(prefix){return document.getElementById(prefix+domKey(key));}).filter(Boolean); }
 function credentialByKey(key){ return credentialRows().filter(function(c){ return c.key === key; })[0] || {}; }
 function renderBalanceResult(key,result){
-  var cell=balanceCell(key); if(!cell)return;
-  var stamp=result&&result.fetched_at?new Date(result.fetched_at).toLocaleString():"时间未知";
-  if(!result||!result.ok){cell.innerHTML='<span class="tag no">查询失败</span><div class="tip err">'+esc((result&&result.message)||"请检查配置")+' · '+esc(stamp)+'</div>';return;}
-  var lines=[]; if(knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
-  if(result.has_limit&&knownNumber(result.limit))lines.push("总额 "+formatAmount(result.limit,result.currency));
-  if(result.has_used&&knownNumber(result.used))lines.push("当前 used "+formatAmount(result.used,result.currency));
-  var detail=lines.length?lines.join(" · "):(result.description||"查询成功"); cell.innerHTML='<span class="tag ok">'+esc(detail)+'</span>';
-  if(result.has_limit&&knownNumber(result.limit)&&Number(result.limit)>0){var percent=Math.max(0,Math.min(100,Math.round(Number(result.fraction||0)*100))),level=percent<=0?" empty":(percent<=20?" low":"");cell.innerHTML+='<div class="quota-bar'+level+'" title="剩余 '+percent+'%"><span style="width:'+percent+'%"></span></div>';}
-  cell.innerHTML+='<div class="tip">'+esc(stamp)+(result.resetTime?" · 重置 "+esc(result.resetTime):"")+'</div>';
+  balanceCells(key).forEach(function(cell){
+    var stamp=result&&result.fetched_at?new Date(result.fetched_at).toLocaleString():"时间未知";
+    if(!result||!result.ok){cell.innerHTML='<span class="tag no">查询失败</span><div class="tip err">'+esc((result&&result.message)||"请检查配置")+' · '+esc(stamp)+'</div>';return;}
+    var lines=[]; if(knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
+    if(result.has_limit&&knownNumber(result.limit))lines.push("总额 "+formatAmount(result.limit,result.currency));
+    if(result.has_used&&knownNumber(result.used))lines.push("当前 used "+formatAmount(result.used,result.currency));
+    var detail=lines.length?lines.join(" · "):(result.description||"查询成功"); cell.innerHTML='<span class="tag ok balance-detail">'+esc(detail)+'</span>';
+    if(result.has_limit&&knownNumber(result.limit)&&Number(result.limit)>0){var percent=Math.max(0,Math.min(100,Math.round(Number(result.fraction||0)*100))),level=percent<=0?" empty":(percent<=20?" low":"");cell.innerHTML+='<div class="quota-bar'+level+'" title="剩余 '+percent+'%"><span style="width:'+percent+'%"></span></div>';}
+    cell.innerHTML+='<div class="tip">'+esc(stamp)+(result.resetTime?" · 重置 "+esc(result.resetTime):"")+'</div>';
+  });
 }
 function formatAmount(value, currency){
   var n = Number(value); if (!isFinite(n)) return String(value);
@@ -457,7 +472,8 @@ function formatAmount(value, currency){
   return (currency ? currency + " " : "") + text;
 }
 function fetchBalance(key){
-  var cell=balanceCell(key),cached=balanceCache[key]; if(cell&&cached)renderBalanceResult(key,cached); if(cell&&!cached)cell.innerHTML='<span class="tag todo">查询中</span>';
+  var cached=balanceCache[key]; if(cached)renderBalanceResult(key,cached);
+  if(!inFlight[key]) balanceCells(key).forEach(function(cell){cell.innerHTML='<span class="tag todo">查询中</span>';});
   if(inFlight[key]) return inFlight[key]; var c=credentialByKey(key);
   inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{},30000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(res){return {httpOK:r.ok,body:res};});})
@@ -465,7 +481,18 @@ function fetchBalance(key){
     .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
     .then(function(res){delete inFlight[key];return res;}); return inFlight[key];
 }
-function fetchSelectedBalances(){ return Promise.all(Object.keys(displaySel).map(fetchBalance)); }
+function fetchSelectedBalances(button){
+  var names=credentialRows().filter(function(c){return displaySel[c.key];}).map(function(c){return c.key;});
+  if(!names.length){if(button)msg("尚未选择账号", "");return Promise.resolve([]);}
+  if(button){setBusy(button,true,"刷新中…");msg("正在刷新已选择账号余额…","");}
+  return Promise.all(names.map(fetchBalance)).then(function(results){
+    if(button){var failed=results.filter(function(r){return !r.ok;}).length;msg(failed?"余额刷新完成，部分账号查询失败，请查看对应结果":"已选择账号余额已更新",failed?"err":"ok");setBusy(button,false);}
+    return results;
+  },function(error){
+    if(button){msg("刷新余额失败："+error.message,"err");setBusy(button,false);}
+    throw error;
+  });
+}
 function fetchAllBalances(button){
   var names = credentialRows().map(function(c){ return c.key; });
   if (!names.length) { msg("当前没有可查询的账号/站点", ""); return; }
