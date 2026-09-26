@@ -123,6 +123,22 @@ var queried = {};
 var balanceCache = storageGet("api-balance-balance-v1", {});
 var inFlight = {};
 var keySetupOpened = false;
+var formDrafts = {};
+function profileFor(key){
+  var profiles=DATA&&DATA.config&&DATA.config.profiles, c=credentialByKey(key), profile=profiles&&profiles[key];
+  if(!profile&&profiles) profile=profiles[c.provider];
+  if(!profile&&DATA&&DATA.config&&DATA.config.__top__) profile=DATA.config.__top__;
+  return profile || {};
+}
+function formValues(box){
+  if(!box) return {};
+  var out={};
+  [["vendor",".f-vendor"],["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"],["used_path",".f-used"]].forEach(function(m){var el=box.querySelector(m[1]);if(el)out[m[0]]=el.value;});
+  return out;
+}
+function captureFormDrafts(){
+  Object.keys(selected).forEach(function(key){var box=document.getElementById("f-"+domKey(key));if(box)formDrafts[key]=formValues(box);});
+}
 function updateOverview(list){
   list = list || (DATA && DATA.providers) || [];
   var supported = 0, todo = 0, credentials = 0, sites = 0;
@@ -445,7 +461,7 @@ function fetchBalance(key){
   inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{},30000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(res){return {httpOK:r.ok,body:res};});})
     .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;recordSnapshot(key,res);}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
-    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
+    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
     .then(function(res){delete inFlight[key];return res;}); return inFlight[key];
 }
 function fetchSelectedBalances(){ return Promise.all(Object.keys(displaySel).map(fetchBalance)); }
@@ -473,7 +489,20 @@ function renderForms(){
       '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div></details></div>';
   });
   box.innerHTML = html;
-  names.forEach(function(key){ preset(key); applyProfile(key); });
+  names.forEach(function(key){
+    var c=credentialByKey(key), profile=profileFor(key), draft=formDrafts[key];
+    preset(key);
+    applyProfile(key);
+    var box=document.getElementById("f-"+domKey(key));
+    if(!profile.base_url && c.base_url) box.querySelector(".f-base").value=c.base_url;
+    if(!profile.vendor && PRESETS[c.provider]) { box.querySelector(".f-vendor").value=c.provider; preset(key); if(c.base_url) box.querySelector(".f-base").value=c.base_url; }
+    if(draft) applyDraft(key,draft);
+  });
+}
+function applyDraft(key,draft){
+  var box=document.getElementById("f-"+domKey(key)); if(!box||!draft)return;
+  if(draft.vendor){box.querySelector(".f-vendor").value=draft.vendor;preset(key);}
+  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){if(draft[m]!==undefined)box.querySelector(m[1]).value=draft[m];});
 }
 function applyProfile(key){
   var box = document.getElementById("f-" + domKey(key));
@@ -504,6 +533,7 @@ function preset(key){
   box.querySelector(".f-plan").value = p.plan || "";
 }
 function collectConfig(){
+  captureFormDrafts();
   var cfg = {};
   if (DATA && DATA.config) {
     cfg.enabled = DATA.config.enabled !== false;
