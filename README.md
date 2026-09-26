@@ -276,13 +276,12 @@ plugins:
 
 - **供应商列表与「AI 提供商」页签一致，并直接显示余额**：
   - 凭据文件供应商通过宿主回调 `host.auth.list` 零密钥自动读取；
-  - config.yaml 里的 API-Key 供应商（gemini / claude / codex / xai / meta /
-    interactions / vertex-api-key 与 openai-compatibility）没有凭据文件，
-    宿主回调会跳过它们，因此插件会在配置了 `management_key` 时自动调用
-    管理 API 读取 `config` 补齐，两边数量保持一致；
-  - 每行都有**余额**列：点「查询全部余额」或勾选「显示」即由服务端完成
-    实际余额查询（复用 quota.fetch 管线，自动识别 one-api / new-api /
-    sub2api 等站点类型），页面只看到聚合后的数字；
+  - config.yaml 里的 API-Key 供应商没有凭据文件，宿主回调会跳过它们，因此插件会在配置了
+    `management_key` 时自动调用管理 API 读取 `config` 补齐；现在会动态识别所有以
+    `-api-key` 结尾的配置项以及 `openai-compatibility`，不再依赖固定厂商白名单；
+  - 向导首屏显示供应商、凭据总数、启用数和去重站点数，并支持按名称/标签/站点搜索和按状态筛选；
+  - 每行都有**余额 / 用量**列：点「查询全部余额」或勾选「显示」即由服务端完成实际余额查询，
+    页面分开展示余额、总额、已用和剩余比例，并保留进度条与最近查询结果；
 - **自由选择显示余额的供应商**：勾选每行的「显示」并「保存到 CPA」，
   名单写入插件配置 `providers`。名单非空时 CPA 只会把勾选供应商的余额
   查询路由给本插件，未勾选的完全不打扰；

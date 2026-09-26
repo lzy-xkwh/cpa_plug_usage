@@ -913,6 +913,30 @@ func TestConfigProviderCredentialRecordsEmptyEntriesSafe(t *testing.T) {
 	}
 }
 
+func TestConfigProviderCredentialRecordsDiscoversUnknownAPIKeyType(t *testing.T) {
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		if hostMethod != "host.http.do" {
+			t.Fatalf("unexpected host method %s", hostMethod)
+		}
+		body, _ := json.Marshal(map[string]any{
+			"mistral-api-key": []map[string]any{
+				{"api-key": "m-key", "base-url": "https://api.mistral.ai"},
+			},
+		})
+		raw, _ := json.Marshal(httpResponse{StatusCode: 200, Body: body})
+		return raw, nil
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	records, note := configProviderCredentialRecords("dummy-key")
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if len(records) != 1 || records[0].Provider != "mistral" || records[0].BaseURL != "https://api.mistral.ai" {
+		t.Fatalf("unexpected dynamic provider records: %#v", records)
+	}
+}
+
 // 配置文件供应商列表走服务端保存的 management_key（插件配置内），
 // 页面不参与任何密钥交互，且返回数据不得包含密钥原文。
 func TestListAllProvidersMergesConfigProviders(t *testing.T) {

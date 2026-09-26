@@ -234,6 +234,12 @@ type quotaBucket struct {
 	RemainingFraction float64 `json:"remainingFraction"`
 	ResetTime         string  `json:"resetTime,omitempty"`
 	Description       string  `json:"description,omitempty"`
+	Balance           float64 `json:"-"`
+	Limit             float64 `json:"-"`
+	Used              float64 `json:"-"`
+	HasLimit          bool    `json:"-"`
+	HasUsed           bool    `json:"-"`
+	Currency          string  `json:"-"`
 }
 
 type httpRequest struct {
@@ -413,7 +419,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.4",
+			Version:          "0.9.6",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -1207,6 +1213,12 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 		RemainingFraction: fraction,
 		ResetTime:         reset,
 		Description:       description,
+		Balance:           balance,
+		Limit:             limit,
+		Used:              used,
+		HasLimit:          hasLimit,
+		HasUsed:           hasUsed,
+		Currency:          currency,
 	}
 	resp := quotaFetchResponse{
 		Groups: []quotaGroup{{DisplayName: "余额", Buckets: []quotaBucket{bucket}}},
@@ -1641,10 +1653,13 @@ type credentialInfo struct {
 }
 
 type providerStatus struct {
-	Provider string `json:"provider"`
-	Label    string `json:"label,omitempty"`
-	Status   string `json:"status"` // ok | unsupported | configurable
-	Note     string `json:"note,omitempty"`
+	Provider        string `json:"provider"`
+	Label           string `json:"label,omitempty"`
+	Status          string `json:"status"` // ok | unsupported | configurable
+	Note            string `json:"note,omitempty"`
+	CredentialCount int    `json:"credential_count"`
+	ActiveCount     int    `json:"active_count"`
+	SiteCount       int    `json:"site_count"`
 }
 
 // wizardDataResponse 返回向导页所需的全部数据：当前配置（脱敏）与
@@ -1733,8 +1748,8 @@ type wizardAggregate struct {
 	label      string
 	active     int
 	disabled   int
-	withURL    int
 	sampleURL  string
+	siteURLs   map[string]struct{}
 	credential []credentialInfo
 }
 
@@ -1747,8 +1762,8 @@ func listCredentials() ([]providerStatus, []credentialInfo, string) {
 
 // listAllProviders 汇总两个来源的供应商：
 //  1. 宿主回调 host.auth.list 返回的凭据文件供应商（无需任何密钥）；
-//  2. config.yaml 里的 API-Key 供应商（gemini/claude/codex/xai/meta/
-//     interactions/vertex-api-key 与 openai-compatibility）。
+//  2. config.yaml 里的 API-Key 供应商（动态读取所有以 -api-key 结尾的配置项，
+//     以及 openai-compatibility）。
 //
 // host.auth.list 只返回有凭据文件的记录，config.yaml 中的 API-Key
 // 供应商没有凭据文件，宿主会跳过它们——这正是「AI 提供商」页签
@@ -1778,7 +1793,10 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 			entry.active++
 		}
 		if cred.BaseURL != "" {
-			entry.withURL++
+			if entry.siteURLs == nil {
+				entry.siteURLs = map[string]struct{}{}
+			}
+			entry.siteURLs[cred.BaseURL] = struct{}{}
 			if entry.sampleURL == "" {
 				entry.sampleURL = cred.BaseURL
 			}
@@ -1792,37 +1810,39 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 		entry.credential = append(entry.credential, cred)
 	}
 
-	// 来源 1：凭据文件（host.auth.list）。
+	// 来源 1：凭据文件（host.auth.list）。失败时保留错误说明，继续读取配置文件供应商。
 	raw, err := hostCallMethod("host.auth.list", nil)
 	if err != nil {
-		return []providerStatus{}, []credentialInfo{}, "无法从 CPA 读取凭据列表（host.auth.list: " + err.Error() + "）"
-	}
-	var payload struct {
-		Files []struct {
-			Provider    string `json:"provider"`
-			Name        string `json:"name"`
-			Label       string `json:"label"`
-			Disabled    bool   `json:"disabled"`
-			RuntimeOnly bool   `json:"runtime_only"`
-			BaseURL     string `json:"base_url"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return []providerStatus{}, []credentialInfo{}, "解析凭据列表失败: " + err.Error()
-	}
-	for _, file := range payload.Files {
-		provider := strings.ToLower(strings.TrimSpace(file.Provider))
-		baseURL := strings.TrimSpace(file.BaseURL)
-		name := strings.TrimSpace(file.Name)
-		label := strings.TrimSpace(file.Label)
-		if provider == "" {
-			provider = "(未命名)"
+		notes = append(notes, "无法从 CPA 读取凭据列表（host.auth.list: "+err.Error()+"）")
+	} else {
+		var payload struct {
+			Files []struct {
+				Provider    string `json:"provider"`
+				Name        string `json:"name"`
+				Label       string `json:"label"`
+				Disabled    bool   `json:"disabled"`
+				RuntimeOnly bool   `json:"runtime_only"`
+				BaseURL     string `json:"base_url"`
+			} `json:"files"`
 		}
-		addCredential(credentialInfo{
-			Provider: provider, Name: name, Label: label,
-			BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
-			Source: "file",
-		}, file.Disabled)
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			notes = append(notes, "解析凭据列表失败: "+err.Error())
+		} else {
+			for _, file := range payload.Files {
+				provider := strings.ToLower(strings.TrimSpace(file.Provider))
+				baseURL := strings.TrimSpace(file.BaseURL)
+				name := strings.TrimSpace(file.Name)
+				label := strings.TrimSpace(file.Label)
+				if provider == "" {
+					provider = "(未命名)"
+				}
+				addCredential(credentialInfo{
+					Provider: provider, Name: name, Label: label,
+					BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
+					Source: "file",
+				}, file.Disabled)
+			}
+		}
 	}
 
 	// 来源 2：config.yaml 中的 API-Key 供应商（需要管理密钥）。
@@ -1844,8 +1864,14 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 	result := make([]providerStatus, 0, len(order))
 	for _, provider := range order {
 		entry := byProvider[provider]
-		status := providerStatus{Provider: provider, Label: entry.label}
-		isRelay := entry.withURL > 0 // 有站点地址 = 第三方中转，不是官方接口
+		status := providerStatus{
+			Provider:        provider,
+			Label:           entry.label,
+			CredentialCount: entry.active + entry.disabled,
+			ActiveCount:     entry.active,
+			SiteCount:       len(entry.siteURLs),
+		}
+		isRelay := len(entry.siteURLs) > 0 // 有站点地址 = 第三方中转，不是官方接口
 		switch {
 		case knownNoBalanceProviders[provider] != "" && !isRelay:
 			status.Status = "unsupported"
@@ -1863,7 +1889,7 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 				if entry.active == 0 {
 					status.Note = "全部凭据已停用；启用后勾选并配置余额查询即可"
 				} else if isRelay {
-					status.Note = fmt.Sprintf("第三方中转（%s 等共 %d 个站点地址）：勾选后选择厂商类型即可", entry.sampleURL, entry.withURL)
+					status.Note = fmt.Sprintf("第三方中转（%s 等共 %d 个站点地址）：勾选后选择厂商类型即可", entry.sampleURL, len(entry.siteURLs))
 				} else {
 					status.Note = "尚未配置余额查询：勾选后选择厂商类型即可"
 				}
@@ -1919,34 +1945,6 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 		return nil, fmt.Sprintf("读取 CPA 配置文件供应商失败（HTTP %d）：%s", response.StatusCode, message)
 	}
 	var payload struct {
-		GeminiKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"gemini-api-key"`
-		InteractionsKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"interactions-api-key"`
-		CodexKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"codex-api-key"`
-		XAIKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"xai-api-key"`
-		MetaKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"meta-api-key"`
-		ClaudeKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"claude-api-key"`
-		VertexKeys []struct {
-			APIKey  string `json:"api-key"`
-			BaseURL string `json:"base-url"`
-		} `json:"vertex-api-key"`
 		OpenAICompat []struct {
 			Name          string `json:"name"`
 			BaseURL       string `json:"base-url"`
@@ -1957,6 +1955,10 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 		} `json:"openai-compatibility"`
 	}
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return nil, "解析 CPA 配置文件供应商失败: " + err.Error()
+	}
+	var rawConfig map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body, &rawConfig); err != nil {
 		return nil, "解析 CPA 配置文件供应商失败: " + err.Error()
 	}
 	credentials := []configCredential{}
@@ -1974,13 +1976,24 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 			})
 		}
 	}
-	addSimple("gemini", "Gemini API-Key（配置文件）", payload.GeminiKeys)
-	addSimple("interactions", "Interactions API-Key（配置文件）", payload.InteractionsKeys)
-	addSimple("codex", "Codex API-Key（配置文件）", payload.CodexKeys)
-	addSimple("xai", "xAI API-Key（配置文件）", payload.XAIKeys)
-	addSimple("meta", "Meta API-Key（配置文件）", payload.MetaKeys)
-	addSimple("claude", "Claude API-Key（配置文件）", payload.ClaudeKeys)
-	addSimple("vertex", "Vertex API-Key（配置文件）", payload.VertexKeys)
+	keys := make([]string, 0, len(rawConfig))
+	for key := range rawConfig {
+		if strings.HasSuffix(key, "-api-key") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		var entries []struct {
+			APIKey  string `json:"api-key"`
+			BaseURL string `json:"base-url"`
+		}
+		if json.Unmarshal(rawConfig[key], &entries) != nil {
+			continue
+		}
+		provider := strings.TrimSuffix(key, "-api-key")
+		addSimple(provider, provider+" API-Key（配置文件）", entries)
+	}
 	for _, compat := range payload.OpenAICompat {
 		name := strings.ToLower(strings.TrimSpace(compat.Name))
 		if name == "" {
@@ -2087,6 +2100,12 @@ type providerBalanceResult struct {
 	OK          bool    `json:"ok"`
 	Description string  `json:"description,omitempty"`
 	Fraction    float64 `json:"fraction,omitempty"`
+	Balance     float64 `json:"balance"`
+	Limit       float64 `json:"limit,omitempty"`
+	Used        float64 `json:"used,omitempty"`
+	HasLimit    bool    `json:"has_limit,omitempty"`
+	HasUsed     bool    `json:"has_used,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
 	Message     string  `json:"message,omitempty"`
 }
 
@@ -2116,6 +2135,12 @@ func fetchProviderBalance(provider string) providerBalanceResult {
 		bucket := resp.Groups[0].Buckets[0]
 		result.Description = bucket.Description
 		result.Fraction = bucket.RemainingFraction
+		result.Balance = bucket.Balance
+		result.Limit = bucket.Limit
+		result.Used = bucket.Used
+		result.HasLimit = bucket.HasLimit
+		result.HasUsed = bucket.HasUsed
+		result.Currency = bucket.Currency
 	}
 	if resp.Subscription != nil && strings.TrimSpace(resp.Subscription.Plan) != "" {
 		result.Description += " · " + resp.Subscription.Plan
@@ -2349,11 +2374,12 @@ h1{font-size:20px;margin:0 0 4px}
 .sub{color:var(--mu);font-size:13px;margin-bottom:20px}
 .card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
 .card h2{font-size:15px;margin:0 0 10px}
-.overview{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 14px}
+.overview{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 14px}
 .metric{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;min-width:0}
 .metric .value{font-size:22px;font-weight:700;line-height:1.2}
 .metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
 .metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
+.filterbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}.filterbar input,.filterbar select{max-width:240px}.filterbar .tip{margin:0}
 label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
 input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
 .row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
@@ -2365,13 +2391,14 @@ th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical
 th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
 .tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
 .tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
+.quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
 .configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
 textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
 #msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
 .btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
-@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}}
+@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}}
 
 </style>
 </head>
@@ -2384,6 +2411,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
  <div class="metric ok"><div class="value" id="metricSupported">—</div><div class="label">可直接查询</div></div>
  <div class="metric warn"><div class="value" id="metricTodo">—</div><div class="label">需要配置</div></div>
  <div class="metric"><div class="value" id="metricQueried">0</div><div class="label">本次已查询</div></div>
+ <div class="metric"><div class="value" id="metricCredentials">—</div><div class="label">凭据总数</div></div>
+ <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
 </div>
 
 <div class="card" id="setupCard" style="display:none">
@@ -2398,7 +2427,12 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="card">
 <h2>① 已配置供应商的余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
-<div class="table-scroll"><table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
+<div class="filterbar">
+ <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
+ <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
+ <span class="tip" id="providerCount"></span>
+</div>
+<div class="table-scroll"><table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额 / 用量</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
 <div class="tip" id="provNote"></div>
 <details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
@@ -2441,19 +2475,29 @@ var selected = {};
 var displaySel = {};
 var displaySelInitialized = false;
 var queried = {};
+var balanceCache = {};
 var keySetupOpened = false;
 function updateOverview(list){
   list = list || (DATA && DATA.providers) || [];
-  var supported = 0, todo = 0;
-  list.forEach(function(p){ if (p.status === "ok") supported++; if (p.status === "configurable") todo++; });
+  var supported = 0, todo = 0, credentials = 0, sites = 0;
+  list.forEach(function(p){
+    if (p.status === "ok") supported++;
+    if (p.status === "configurable") todo++;
+    credentials += Number(p.credential_count || 0);
+    sites += Number(p.site_count || 0);
+  });
   var total = document.getElementById("metricTotal");
   var direct = document.getElementById("metricSupported");
   var pending = document.getElementById("metricTodo");
   var done = document.getElementById("metricQueried");
+  var cred = document.getElementById("metricCredentials");
+  var site = document.getElementById("metricSites");
   if (total) total.textContent = list.length;
   if (direct) direct.textContent = supported;
   if (pending) pending.textContent = todo;
   if (done) done.textContent = Object.keys(queried).length;
+  if (cred) cred.textContent = credentials;
+  if (site) site.textContent = sites;
 }
 
 function toggleKeySetup(){
@@ -2511,6 +2555,7 @@ function saveKey(){
     .then(function(){ setBusy(button, false); });
 }
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function jsArg(s){ return esc(JSON.stringify(String(s == null ? "" : s))); }
 function msg(text, cls){
   ["globalMsg", "msg"].forEach(function(id){
     var m = document.getElementById(id);
@@ -2579,36 +2624,54 @@ function renderCredentials(d){
 }
 function renderProviders(d){
   renderCredentials(d);
-  var rows = document.getElementById("provRows");
   var list = d.providers || [];
+  DATA = d;
   updateOverview(list);
-
   if (!displaySelInitialized) {
     displaySelInitialized = true;
+    var configured = d.config && d.config.providers && d.config.providers.length;
     (d.config && d.config.providers || []).forEach(function(name){ displaySel[name] = true; });
+    if (!configured) list.forEach(function(p){ if (p.status === "ok") displaySel[p.provider] = true; });
   }
+  renderProviderRows();
+  document.getElementById("provNote").textContent = d.providers_note || "";
+}
+function renderProviderRows(){
+  var rows = document.getElementById("provRows");
+  var list = (DATA && DATA.providers) || [];
+  var query = ((document.getElementById("providerSearch") || {}).value || "").trim().toLowerCase();
+  var status = ((document.getElementById("providerStatus") || {}).value || "");
+  var filtered = list.filter(function(p){
+    if (status && p.status !== status) return false;
+    if (!query) return true;
+    return [p.provider, p.label, p.note].join(" ").toLowerCase().indexOf(query) >= 0;
+  });
+  var count = document.getElementById("providerCount");
+  if (count) count.textContent = "显示 " + filtered.length + " / " + list.length;
   if (!list.length) {
-    rows.innerHTML = '<tr><td colspan="5" class="tip">' + esc(d.providers_note || "未发现已配置的供应商。") + '</td></tr>';
-    document.getElementById("provNote").textContent = "";
+    rows.innerHTML = '<tr><td colspan="5" class="tip">' + esc((DATA && DATA.providers_note) || "未发现已配置的供应商。") + '</td></tr>';
     return;
   }
   var html = "";
-  list.forEach(function(p){
+  filtered.forEach(function(p){
     var tag, note;
     if (p.status === "ok") { tag = '<span class="tag ok">已支持</span>'; note = esc(p.note); }
     else if (p.status === "unsupported") { tag = '<span class="tag no">无法查询</span>'; note = esc(p.note); }
     else { tag = '<span class="tag todo">可配置</span>'; note = esc(p.note); }
+    var stats = (p.credential_count || 0) + " 凭据 · " + (p.active_count || 0) + " 启用";
+    if (p.site_count) stats += " · " + p.site_count + " 站点";
     var action = "";
     var checked = displaySel[p.provider] ? " checked" : "";
-    action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(\'' + esc(p.provider) + '\',this.checked)"> 显示</label>';
+    action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(' + jsArg(p.provider) + ',this.checked)"> 显示</label>';
     if (p.status === "configurable") {
-      action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(\'' + esc(p.provider) + '\',this.checked)"> 配置</label>';
+      action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(' + jsArg(p.provider) + ',this.checked)"> 配置</label>';
     }
-    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '</td><td>' + tag + '</td><td id="bal-' + esc(p.provider) + '" class="tip">—</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
+    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '<div class="tip">' + stats + '</div></td><td>' + tag + '</td><td id="bal-' + esc(p.provider) + '" class="tip">—</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
   });
-  rows.innerHTML = html;
-  document.getElementById("provNote").textContent = d.providers_note || "";
+  rows.innerHTML = html || '<tr><td colspan="5" class="tip">没有匹配的供应商</td></tr>';
+  filtered.forEach(function(p){ if (balanceCache[p.provider]) renderBalanceResult(p.provider, balanceCache[p.provider]); });
 }
+
 function togglePick(provider, on){
   if (on) selected[provider] = true; else delete selected[provider];
   renderForms();
@@ -2620,40 +2683,69 @@ function toggleDisplay(provider, on){
 function balanceCell(provider){
   return document.getElementById("bal-" + provider);
 }
+function renderBalanceResult(provider, result){
+  var cell = balanceCell(provider);
+  if (!cell) return;
+  if (!result || !result.ok) {
+    cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc((result && result.message) || "请检查配置") + '</div>';
+    return;
+  }
+  var lines = [];
+  if (result.balance !== undefined) lines.push("余额 " + formatAmount(result.balance, result.currency));
+  if (result.has_limit) lines.push("总额 " + formatAmount(result.limit, result.currency));
+  if (result.has_used) lines.push("已用 " + formatAmount(result.used, result.currency));
+  var detail = lines.length ? lines.join(" · ") : (result.description || "查询成功");
+  cell.innerHTML = '<span class="tag ok">' + esc(detail) + '</span>';
+  if (result.has_limit && Number(result.limit) > 0) {
+    var percent = Math.max(0, Math.min(100, Math.round(Number(result.fraction || 0) * 100)));
+    var level = percent <= 0 ? " empty" : (percent <= 20 ? " low" : "");
+    cell.innerHTML += '<div class="quota-bar' + level + '" title="剩余 ' + percent + '%"><span style="width:' + percent + '%"></span></div><div class="tip">剩余 ' + percent + '% · 刚刚更新</div>';
+  } else {
+    cell.innerHTML += '<div class="tip">刚刚更新 · 未提供总额度</div>';
+  }
+}
+function formatAmount(value, currency){
+  var n = Number(value);
+  if (!isFinite(n)) return String(value);
+  var text = Math.abs(n) >= 1000 ? n.toLocaleString(undefined, {maximumFractionDigits: 4}) : String(Math.round(n * 10000) / 10000);
+  return (currency ? currency + " " : "") + text;
+}
 function fetchBalance(provider){
   var cell = balanceCell(provider);
-  if (!cell) return Promise.resolve();
-  cell.innerHTML = '<span class="tag todo">查询中</span>';
+  var cached = balanceCache[provider];
+  if (cell && cached) renderBalanceResult(provider, cached);
+  if (cell) cell.innerHTML = cached ? cell.innerHTML : '<span class="tag todo">查询中</span>';
   return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
     .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(res){ return {httpOK:r.ok, body:res}; }); })
     .then(function(result){
-      if (!cell.isConnected) return;
       var res = result.body;
       queried[provider] = true;
-      updateOverview();
       if (result.httpOK && res && res.ok) {
-        cell.innerHTML = '<span class="tag ok">' + esc(res.description || "查询成功") + '</span>' + '<div class="tip">刚刚更新</div>';
+        balanceCache[provider] = res;
+        renderBalanceResult(provider, res);
       } else {
-        cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc((res && res.message) || (result.httpOK ? "请检查配置" : "HTTP 请求失败")) + '</div>';
+        renderBalanceResult(provider, {ok:false, message:(res && res.message) || (result.httpOK ? "请检查配置" : "HTTP 请求失败")});
       }
+      updateOverview();
     })
     .catch(function(e){
       queried[provider] = true;
+      renderBalanceResult(provider, {ok:false, message:e.message});
       updateOverview();
-      if (cell.isConnected) cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc(e.message) + '</div>';
     });
 }
+
 function fetchSelectedBalances(){
   return Promise.all(Object.keys(displaySel).map(function(name){ return fetchBalance(name); }));
 }
 function fetchAllBalances(button){
-  var cells = document.querySelectorAll("td[id^='bal-']");
-  if (!cells.length) { msg("当前没有可查询的供应商", ""); return; }
+  var list = (DATA && DATA.providers) || [];
+  var names = list.map(function(p){ return p.provider; });
+  if (!names.length) { msg("当前没有可查询的供应商", ""); return; }
   setBusy(button, true, "查询中…");
-  msg("正在查询 " + cells.length + " 个供应商余额…", "");
-  var requests = [];
-  for (var i = 0; i < cells.length; i++) requests.push(fetchBalance(cells[i].id.slice(4)));
-  Promise.all(requests).then(function(){
+  msg("正在查询 " + names.length + " 个供应商余额…", "");
+  Promise.all(names.map(function(name){ return fetchBalance(name); })).then(function(){
+    renderProviderRows();
     msg("余额查询完成，结果已更新", "ok");
     setBusy(button, false);
   }, function(e){
@@ -2692,7 +2784,24 @@ function renderForms(){
       '</details></div>';
   });
   box.innerHTML = html;
-  names.forEach(function(name){ preset(name); });
+  names.forEach(function(name){ preset(name); applyProfile(name); });
+  var def = DATA && DATA.config && DATA.config.profiles && DATA.config.profiles.default;
+  var defaultBase = document.getElementById("defaultBase");
+  if (defaultBase && def && def.base_url && !defaultBase.value) defaultBase.value = def.base_url;
+}
+function applyProfile(name){
+  var box = document.getElementById("f-" + name);
+  var profiles = DATA && DATA.config && DATA.config.profiles;
+  var profile = profiles && profiles[name];
+  if (!profile && DATA && DATA.config && DATA.config.__top__) profile = DATA.config.__top__;
+  if (!box || !profile) return;
+  if (profile.vendor) {
+    box.querySelector(".f-vendor").value = profile.vendor;
+    preset(name);
+  }
+  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){
+    if (profile[m[0]] !== undefined) box.querySelector(m[1]).value = profile[m[0]];
+  });
 }
 function vendorOptions(){
   var h = "";
