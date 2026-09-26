@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>api-balance 余额配置向导</title>
+<style>
+:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--soft:#eff6ff}
+*{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+body{margin:0;background:var(--bg);color:var(--tx)}
+.wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mu);font-size:13px;margin-bottom:20px}
+.card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 10px}
+.overview{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 14px}
+.metric{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;min-width:0}
+.metric .value{font-size:22px;font-weight:700;line-height:1.2}
+.metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
+.metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
+.filterbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}.filterbar input,.filterbar select{max-width:240px}.filterbar .tip{margin:0}
+.tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:1px solid var(--bd)}.tab{border:0;background:transparent;padding:8px 12px;color:var(--mu);cursor:pointer;font-size:13px;border-bottom:2px solid transparent}.tab.active{color:var(--ac);border-bottom-color:var(--ac);font-weight:600}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.statbox{border:1px solid var(--bd);border-radius:8px;padding:12px}.statbox b{font-size:20px}.statbox span{display:block;color:var(--mu);font-size:12px;margin-top:4px}
+label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
+input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
+.row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
+.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
+.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
+.table-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
+.tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
+.quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
+.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
+details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
+textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
+.tip{font-size:12px;color:var(--mu);margin-top:6px}
+#msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
+.btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
+@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}}
+
+</style>
+</head>
+<body><div class="wrap">
+<h1>API 余额查询 · 配置向导</h1>
+<div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
+<div id="globalMsg" role="status" aria-live="polite"></div>
+<div class="overview" aria-label="余额概览">
+ <div class="metric info"><div class="value" id="metricTotal">—</div><div class="label">已发现供应商</div></div>
+ <div class="metric ok"><div class="value" id="metricSupported">—</div><div class="label">可直接查询</div></div>
+ <div class="metric warn"><div class="value" id="metricTodo">—</div><div class="label">需要配置</div></div>
+ <div class="metric"><div class="value" id="metricQueried">0</div><div class="label">本次已查询</div></div>
+ <div class="metric"><div class="value" id="metricCredentials">—</div><div class="label">凭据总数</div></div>
+ <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
+</div>
+
+<div class="tabs"><button class="tab active" onclick="showView('accounts',this)">账号明细</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
+<div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>已用增量合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
+<div id="view-daily" style="display:none" class="card"><h2>每日用量快照</h2><div class="filterbar"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种</option></select></div><div id="dailyRows" class="tip">查询成功后，这里会记录本浏览器每个账号每天的首末快照。上游未提供历史 API 时，不会伪造历史用量。</div><button class="btn" onclick="clearDailySnapshots()">清除本机快照</button></div>
+
+<div class="card" id="setupCard" style="display:none">
+<h2>设置 / 重设 CPA 管理密钥</h2>
+<div class="tip">你使用的是 CPAMP Full/Manager 页面时，这里的“当前页面管理密钥”填写 CPAMP 登录用的管理员密钥；CPAMP 会在服务端把它换成已保存的 CPA Management Key，插件不会保存 <code>cpamp_...</code>。如果直接访问 CPA 的管理页面，则填写 CPA 配置 <code>remote-management.secret-key</code> 的原始明文。下面的 CPA 地址必须是 CPAMP 服务端或插件所在环境能够访问的 CPA 地址，例如 <code>http://192.168.1.2:8137</code>，不能填 CPAMP 的 <code>:18317</code>。密钥只在服务端处理，不会返回页面。<b style="color:var(--err)">连续认证失败 5 次可能触发 CPA 临时封禁；确认地址和密钥后只提交一次。</b></div>
+<div class="row" style="margin-top:8px">
+  <div style="flex:2"><input id="cpaurl" type="url" autocomplete="off" placeholder="CPA 地址，例如 http://192.168.1.2:8137"></div>
+  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="当前页面管理密钥：CPAMP 管理员密钥或 CPA Management Key"></div>
+  <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存连接</button></div>
+</div>
+</div>
+
+<div class="card" id="accountPanel"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
+<div class="filterbar">
+ <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
+ <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
+ <span class="tip" id="providerCount"></span>
+</div>
+<div class="table-scroll"><table><thead><tr><th style="width:18%">供应商 / 账号</th><th style="width:25%">站点地址</th><th style="width:17%">状态</th><th style="width:25%">余额 / 用量</th><th style="width:120px">操作</th></tr></thead>
+<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
+<div class="tip" id="provNote"></div>
+<div class="selection-bar" id="selectionBar" style="display:none;margin-top:10px"><span class="tip">显示选择会保存到 CPA，刷新后保留：</span><button class="btn primary" onclick="saveSelection()">保存显示选择</button><span id="selectionMsg" class="tip"></span></div>
+<details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
+<div class="tip" id="credInfo"></div>
+<table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
+</details>
+</div>
+
+<div class="card" id="cfgCard" style="display:none">
+<h2>② 为选中的供应商配置余额查询</h2>
+<div id="forms"></div>
+<div class="row" style="margin-top:10px">
+  <div style="flex:2"><label>可选：为简单站点补一个通用档案（键 default，兜底未匹配凭据）</label>
+  <input id="defaultBase" placeholder="留空 = 不添加"></div>
+</div>
+<div style="margin-top:12px">
+  <button class="btn primary" onclick="saveAll()">保存到 CPA</button>
+  <button class="btn" onclick="showYAML()">仅生成 YAML</button>
+  <span id="msg"></span>
+</div>
+<div id="yamlBox" style="display:none;margin-top:10px">
+  <label>生成的配置（YAML，可复制到插件配置手动保存）</label>
+  <textarea id="out" readonly></textarea>
+</div>
+</div>
+
+<script>
+var PRESETS = {
+  "deepseek":   {label:"DeepSeek 官方", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
+  "moonshot":   {label:"Moonshot Kimi 官方", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
+  "openrouter": {label:"OpenRouter", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
+  "one-api":    {label:"one-api 系中转站", lim:"hard_limit_usd", used:"total_usage", scale:"0.01"},
+  "new-api":    {label:"New API 站点", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
+  "sub2api":    {label:"sub2api 站点", bal:"remaining", cur:"unit", plan:"planName"},
+  "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
+};
+var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
+var DATA = null;
+var selected = {};
+var displaySel = {};
+var displaySelInitialized = false;
+var queried = {};
+var balanceCache = storageGet("api-balance-balance-v1", {});
+var inFlight = {};
+var keySetupOpened = false;
+function updateOverview(list){
+  list = list || (DATA && DATA.providers) || [];
+  var supported = 0, todo = 0, credentials = 0, sites = 0;
+  list.forEach(function(p){
+    if (p.status === "ok") supported++;
+    if (p.status === "configurable") todo++;
+    credentials += Number(p.credential_count || 0);
+    sites += Number(p.site_count || 0);
+  });
+  var total = document.getElementById("metricTotal");
+  var direct = document.getElementById("metricSupported");
+  var pending = document.getElementById("metricTodo");
+  var done = document.getElementById("metricQueried");
+  var cred = document.getElementById("metricCredentials");
+  var site = document.getElementById("metricSites");
+  if (total) total.textContent = list.length;
+  if (direct) direct.textContent = supported;
+  if (pending) pending.textContent = todo;
+  if (done) done.textContent = Object.keys(queried).length;
+  if (cred) cred.textContent = credentials;
+  if (site) site.textContent = sites;
+}
+
+function toggleKeySetup(){
+  keySetupOpened = !keySetupOpened;
+  document.getElementById("setupCard").style.display = keySetupOpened ? "block" : "none";
+  if (keySetupOpened) document.getElementById("mgmtkey").focus();
+}
+function showKeySetup(){
+  keySetupOpened = true;
+  document.getElementById("setupCard").style.display = "block";
+  document.getElementById("mgmtkey").focus();
+}
+function managementErrorText(status, body){
+  var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
+  var lower = detail.toLowerCase();
+  if (status === 401) {
+    if (/bcrypt|hash|compare|invalid management key/.test(lower)) return "CPA 拒绝了管理密钥（HTTP 401）。请填写 remote-management.secret-key 启动前配置的原始明文，不要填写 CPA 自动写回的 bcrypt 哈希、普通 API Key 或插件 management_key 字段名。";
+    return "管理密钥校验失败（HTTP 401）。请核对 CPA config.yaml 的 remote-management.secret-key 原始明文；配置中的 bcrypt 哈希不能反向还原为密码。";
+  }
+  if (status === 403) {
+    if (/banned|ban|temporar/.test(lower)) return "已触发 CPA 防爆破封禁：连续认证失败后本机 IP 会临时封禁约 30 分钟，期间即使密钥正确也会返回 403。等待解封或重启 CPA 后，只粘贴一次 remote-management.secret-key 的原始明文。";
+    if (/disabled|remote/.test(lower)) return "CPA 拒绝了远程管理（HTTP 403）。若浏览器与 CPA 不在同一台机器，请在 CPA 配置中设置 remote-management.allow-remote: true；本机访问通常不需要开启此项。";
+    if (/not set|secret.key|management key/.test(lower)) return "CPA 尚未启用管理 API（HTTP 403）。请在 remote-management.secret-key 设置管理密钥后重启 CPA，再输入该原始明文。";
+    return "保存被拒绝（HTTP 403）：" + (detail || "请检查 remote-management.allow-remote 与 secret-key 配置");
+  }
+  return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
+}
+function saveKey(){
+  var key = document.getElementById("mgmtkey").value.trim();
+  var cpaURL = document.getElementById("cpaurl").value.trim();
+  var button = document.getElementById("saveKeyBtn");
+  if (!cpaURL) { msg("请输入 CPA 地址，例如 http://192.168.1.2:8137", "err"); return; }
+  if (!key) { msg("请输入当前页面管理密钥", "err"); return; }
+  setBusy(button, true, "保存中…");
+  msg("正在通过当前页面认证保存 CPA 连接…", "");
+  fetchTimeout("/v0/management/plugins/api-balance/config-wizard/key", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key, "X-Management-Key": key},
+    body: JSON.stringify({management_url: cpaURL})
+  }, 15000).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(body){
+      if (!r.ok || !body.result || body.result.ok === false) {
+        var status = r.status || 500;
+        var result = body.result || body;
+        msg(managementErrorText(status, result), "err");
+        return false;
+      }
+      msg((body.result && body.result.message) || "CPA 连接已保存，正在刷新供应商列表…", "ok");
+      document.getElementById("mgmtkey").value = "";
+      keySetupOpened = false;
+      setTimeout(function(){ loadData(); }, 600);
+      return true;
+    });
+  }).catch(function(e){ msg("保存 CPA 连接失败：" + e.message, "err"); })
+    .then(function(){ setBusy(button, false); });
+}
+function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function jsArg(s){ return esc(JSON.stringify(String(s == null ? "" : s))); }
+function msg(text, cls){
+  ["globalMsg", "msg"].forEach(function(id){
+    var m = document.getElementById(id);
+    if (m) { m.textContent = text || ""; m.className = cls || ""; }
+  });
+}
+function setBusy(button, busy, label){
+  if (!button) return;
+  if (busy) {
+    button.dataset.originalLabel = button.textContent;
+    button.textContent = label || "处理中…";
+    button.disabled = true;
+  } else {
+    button.textContent = button.dataset.originalLabel || button.textContent;
+    button.disabled = false;
+  }
+}
+// 余额查询完全在服务端完成：凭据与管理密钥都取自插件配置（CPA
+// config.yaml 内），页面只拿到聚合后的余额数字，接触不到任何密钥。
+function fetchTimeout(url, opts, ms){
+  opts = opts || {};
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    opts.signal = AbortSignal.timeout(ms || 10000);
+  }
+  return fetch(url, opts);
+}
+function loadError(text){
+  document.getElementById("provRows").innerHTML = '<tr><td colspan="5" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
+  document.getElementById("provNote").textContent = "";
+  msg(text, "err");
+}
+function showView(view, button){
+  document.getElementById("view-overview").style.display = view === "overview" ? "block" : "none";
+  document.getElementById("view-daily").style.display = view === "daily" ? "block" : "none";
+  document.getElementById("accountPanel").style.display = view === "accounts" ? "block" : "none";
+  document.querySelectorAll(".tab").forEach(function(b){ b.classList.remove("active"); });
+  if (button) button.classList.add("active");
+  if (view === "overview") renderSummary();
+  if (view === "daily") renderDailySnapshots();
+}
+function storageGet(key, fallback){
+  try { if (window.localStorage) { var raw = localStorage.getItem(key); return raw == null ? fallback : JSON.parse(raw); } } catch(e) {}
+  return fallback;
+}
+function storageSet(key, value){ try { if (window.localStorage) localStorage.setItem(key, JSON.stringify(value)); } catch(e) {} }
+function storageRemove(key){ try { if (window.localStorage) localStorage.removeItem(key); } catch(e) {} }
+function nowISO(){ return new Date().toISOString(); }
+function accountText(c){ return [c.provider,c.label,c.name,c.base_url].join(" ").toLowerCase(); }
+function resultCurrency(r){ return String((r && r.currency) || "").trim().toUpperCase(); }
+function knownNumber(v){ return v !== undefined && v !== null && v !== "" && isFinite(Number(v)); }
+function selectedCredentialRows(){
+  var q = ((document.getElementById("summaryAccount") || {}).value || "").trim().toLowerCase();
+  var cur = ((document.getElementById("summaryCurrency") || {}).value || "").trim().toUpperCase();
+  return credentialRows().filter(function(c){
+    if (!displaySel[c.key]) return false;
+    if (q && accountText(c).indexOf(q) < 0) return false;
+    var r = balanceCache[c.key];
+    return !cur || (r && r.ok && resultCurrency(r) === cur);
+  });
+}
+function renderCurrencyOptions(id, values){
+  var el=document.getElementById(id); if(!el) return;
+  var old=el.value, html='<option value="">全部币种</option>';
+  values.sort().forEach(function(c){ html += '<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
+  el.innerHTML=html; if(values.indexOf(old)>=0) el.value=old;
+}
+function renderSummary(){
+  var rows = credentialRows(), chosen = selectedCredentialRows(), ready = 0, byCurrency = {}, currencies = [];
+  rows.forEach(function(c){ if (displaySel[c.key] && c.status === "ok") ready++; });
+  chosen.forEach(function(c){
+    var r=balanceCache[c.key]; if(!r || !r.ok) return;
+    var cur=resultCurrency(r) || "未知币种";
+    if(!byCurrency[cur]) byCurrency[cur]={balance:0,balanceKnown:true,used:0,usedKnown:true,count:0};
+    var g=byCurrency[cur]; g.count++;
+    if(knownNumber(r.balance)) g.balance += Number(r.balance); else g.balanceKnown=false;
+    if(r.has_used && knownNumber(r.used)) g.used += Number(r.used); else g.usedKnown=false;
+  });
+  currencies=Object.keys(byCurrency).filter(function(c){return c!=="未知币种";}); renderCurrencyOptions("summaryCurrency",currencies);
+  var selectedCurrency=((document.getElementById("summaryCurrency")||{}).value||"").trim().toUpperCase();
+  var keys=Object.keys(byCurrency).filter(function(c){return !selectedCurrency || c===selectedCurrency;});
+  var b=keys.length===1 && byCurrency[keys[0]].balanceKnown ? formatAmount(byCurrency[keys[0]].balance,keys[0]) : "—";
+  var u=keys.length===1 && byCurrency[keys[0]].usedKnown ? formatAmount(byCurrency[keys[0]].used,keys[0]) : "—";
+  document.getElementById("statSelected").textContent = chosen.length;
+  document.getElementById("statReady").textContent = ready;
+  document.getElementById("statBalance").textContent = b;
+  document.getElementById("statUsed").textContent = u;
+  var parts=keys.map(function(c){var g=byCurrency[c];return esc(c)+"：余额 "+(g.balanceKnown?formatAmount(g.balance,c):"—")+"，已用 "+(g.usedKnown?formatAmount(g.used,c):"—")+"（"+g.count+" 个账号）";});
+  document.getElementById("summaryByCurrency").innerHTML=parts.length?parts.join("<br>"):"暂无当前选择范围内的成功查询结果";
+}
+function snapshotKey(){ return "api-balance-daily-v2"; }
+function snapshotItems(){ var x=storageGet(snapshotKey(),[]); return Array.isArray(x)?x:[]; }
+function recordSnapshot(key, result){
+  if (!result || !result.ok) return;
+  var currency=resultCurrency(result), day=new Date().toISOString().slice(0,10), at=nowISO(), items=snapshotItems();
+  var idx=-1;
+  items.forEach(function(x,i){if(x.key===key && x.day===day && String(x.currency||"").toUpperCase()===currency)idx=i;});
+  var used=knownNumber(result.used)?Number(result.used):null, balance=knownNumber(result.balance)?Number(result.balance):null;
+  if(idx<0) items.push({key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,limit:knownNumber(result.limit)?Number(result.limit):null});
+  else {var x=items[idx]; x.lastAt=at; x.lastBalance=balance; x.lastUsed=used; if(knownNumber(result.limit)){x.limit=Number(result.limit);x.hasLimit=!!result.has_limit;}}
+  items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
+}
+function snapshotUsedDelta(x){
+  if(!knownNumber(x.firstUsed)||!knownNumber(x.lastUsed)||Number(x.lastUsed)<Number(x.firstUsed)) return null;
+  return Number(x.lastUsed)-Number(x.firstUsed);
+}
+function renderDailySnapshots(){
+  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
+  var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
+  items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||String(x.currency||"").toUpperCase()===cur);});
+  var currencies=[]; snapshotItems().forEach(function(x){var c=String(x.currency||"").toUpperCase();if(c&&currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
+  if(!items.length){box.innerHTML="暂无符合条件的快照。查询成功后会记录每个账号每天的首末快照。";return;}
+  var groups={}; items.forEach(function(x){var k=x.day+"\0"+String(x.currency||"").toUpperCase(),g=groups[k]||(groups[k]={day:x.day,currency:x.currency||"未知币种",count:0,balanceChange:0,balanceKnown:true,used:0,usedKnown:true});g.count++;
+    if(knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else g.balanceKnown=false;
+    var d=snapshotUsedDelta(x);if(d===null)g.usedKnown=false;else g.used+=d;
+  });
+  var html="<table><thead><tr><th>日期</th><th>币种</th><th>账号数</th><th>余额变化</th><th>每日 used 增量</th></tr></thead><tbody>";
+  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k];html+="<tr><td>"+esc(g.day)+"</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"—")+"</td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";});
+  box.innerHTML=html+"</tbody></table><div class='tip'>余额变化独立于 used；每日用量只显示同一账号当日末值减首值，检测到重置时标为未知。</div>";
+}
+function clearDailySnapshots(){ storageRemove(snapshotKey()); renderDailySnapshots(); }
+
+function loadData(button){
+  setBusy(button, true, "刷新中…");
+  msg("正在刷新供应商列表…", "");
+  fetchTimeout("/v0/resource/plugins/api-balance/config-data", {}, 10000).then(function(r){
+    if (r.status === 404) { loadError("数据端点不存在（404）：当前运行的插件还是旧版本。请到 插件商店 把 api-balance 更新到最新版，然后刷新本页。"); return null; }
+    if (!r.ok) { loadError("加载数据失败（HTTP " + r.status + "），请刷新重试。"); return null; }
+    return r.json().catch(function(){ throw new Error("服务器返回的不是有效 JSON"); });
+  }).then(function(d){
+    if (!d) return;
+    DATA = d;
+    var urlInput = document.getElementById("cpaurl");
+    if (urlInput && d.management_url && !urlInput.value) urlInput.value = d.management_url;
+    var note = d.providers_note || "";
+    if (d.management_configured && /HTTP 40[13]/.test(note)) {
+      keySetupOpened = true;
+    }
+    document.getElementById("setupCard").style.display = (!d.management_configured || keySetupOpened) ? "block" : "none";
+    renderProviders(d);
+    renderForms();
+    fetchSelectedBalances();
+    msg("供应商列表已刷新", "ok");
+  }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); })
+    .then(function(){ setBusy(button, false); });
+}
+function renderCredentials(d){
+  var list = d.credentials || [];
+  var fromConfig = list.filter(function(c){ return c.source === "config"; }).length;
+  var text = "共 " + list.length + " 条凭据：凭据文件 " + (list.length - fromConfig) + " 条（host.auth.list），配置文件 " + fromConfig + " 条（管理 API）。若与「AI 提供商」页签的配置数不一致，请把本行截图反馈给插件作者。";
+  document.getElementById("credInfo").textContent = text;
+  var rows = "";
+  list.forEach(function(c){
+    rows += "<tr><td>" + esc(c.provider) + "</td><td class='tip'>" + esc(c.name || c.label || "") + "</td><td class='tip'>" + esc(c.base_url || "") + "</td><td class='tip'>" + (c.source === "config" ? "配置文件 · " : "") + (c.disabled ? "已停用" : "启用") + (c.runtime_only ? " · 运行时" : "") + "</td></tr>";
+  });
+  document.getElementById("credRows").innerHTML = rows || "<tr><td colspan='4' class='tip'>（空）</td></tr>";
+}
+function accountKey(c){ return c.profile_key || (c.provider + "@" + (c.base_url || c.name || "default")); }
+function domKey(key){ return encodeURIComponent(String(key)); }
+function providerStatusMap(){
+  var out = {};
+  ((DATA && DATA.providers) || []).forEach(function(p){ out[p.provider] = p; });
+  return out;
+}
+function credentialRows(){
+  var map = providerStatusMap();
+  return ((DATA && DATA.credentials) || []).map(function(c){
+    var p = map[c.provider] || {};
+    var copy = {};
+    Object.keys(c).forEach(function(k){ copy[k] = c[k]; });
+    copy.key = accountKey(c);
+    copy.status = c.status || p.status || "configurable";
+    copy.note = c.note || p.note || "需要为该账号/站点配置余额接口";
+    if (!c.base_url && copy.status !== "ok") copy.note = "未提供站点地址：请在下方配置该账号的 base_url；无法自动判断余额接口";
+    return copy;
+  });
+}
+function renderProviders(d){
+  renderCredentials(d); DATA=d; var list=credentialRows(); updateOverview(d.providers||[]);
+  if(!displaySelInitialized){
+    displaySelInitialized=true;
+    var saved=Array.isArray(d.config&&d.config.selected_credentials)?d.config.selected_credentials:storageGet("api-balance-display-v1",null);
+    if(Array.isArray(saved)) saved.forEach(function(name){displaySel[name]=true;});
+    else if(d.config&&Array.isArray(d.config.providers)&&d.config.providers.length) list.forEach(function(c){if(d.config.providers.indexOf(c.provider)>=0)displaySel[c.key]=true;});
+    else list.forEach(function(c){if(c.status==="ok")displaySel[c.key]=true;});
+  }
+  renderProviderRows(); document.getElementById("provNote").textContent=d.providers_note||""; document.getElementById("selectionBar").style.display="block";
+}
+function renderProviderRows(){
+  var rows = document.getElementById("provRows");
+  var list = credentialRows();
+  var query = ((document.getElementById("providerSearch") || {}).value || "").trim().toLowerCase();
+  var status = ((document.getElementById("providerStatus") || {}).value || "");
+  var filtered = list.filter(function(p){
+    if (status && p.status !== status) return false;
+    if (!query) return true;
+    return [p.provider, p.label, p.name, p.base_url, p.note].join(" ").toLowerCase().indexOf(query) >= 0;
+  });
+  var count = document.getElementById("providerCount");
+  if (count) count.textContent = "显示 " + filtered.length + " / " + list.length + " 个账号/站点";
+  var html = "";
+  filtered.forEach(function(p){
+    var tag = p.status === "ok" ? '<span class="tag ok">可查询</span>' : p.status === "unsupported" ? '<span class="tag no">不支持</span>' : '<span class="tag todo">待配置</span>';
+    var key = p.key, checked = displaySel[key] ? " checked" : "";
+    var action = '<label class="check"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(' + jsArg(key) + ',this.checked)"> 显示</label>';
+    if (p.status !== "ok") action += '<label class="check"><input type="checkbox" style="width:auto"' + (selected[key] ? " checked" : "") + ' onchange="togglePick(' + jsArg(key) + ',this.checked)"> 配置</label>';
+    var site = p.base_url || "无站点地址（无法自动判断余额接口）";
+    html += '<tr><td><b>' + esc(p.provider) + '</b><div class="tip">' + esc(p.label || p.name || "账号") + '</div></td><td>' + esc(site) + '</td><td>' + tag + '<div class="tip">' + esc(p.note) + '</div></td><td id="bal-' + domKey(key) + '" class="tip">—</td><td>' + action + '</td></tr>';
+  });
+  rows.innerHTML = html || '<tr><td colspan="5" class="tip">没有匹配的账号/站点</td></tr>';
+  filtered.forEach(function(p){ if (balanceCache[p.key]) renderBalanceResult(p.key, balanceCache[p.key]); });
+}
+
+function togglePick(key,on){
+  captureFormDrafts(); if(on) selected[key]=true; else delete selected[key]; renderForms();
+}
+function toggleDisplay(key,on){
+  if(on) displaySel[key]=true; else delete displaySel[key]; storageSet("api-balance-display-v1",Object.keys(displaySel));
+  if(on) fetchBalance(key); if(document.getElementById("view-overview").style.display!=="none") renderSummary();
+}
+function balanceCell(key){ return document.getElementById("bal-" + domKey(key)); }
+function credentialByKey(key){ return credentialRows().filter(function(c){ return c.key === key; })[0] || {}; }
+function renderBalanceResult(key,result){
+  var cell=balanceCell(key); if(!cell)return;
+  var stamp=result&&result.fetched_at?new Date(result.fetched_at).toLocaleString():"时间未知";
+  if(!result||!result.ok){cell.innerHTML='<span class="tag no">查询失败</span><div class="tip err">'+esc((result&&result.message)||"请检查配置")+' · '+esc(stamp)+'</div>';return;}
+  var lines=[]; if(knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
+  if(result.has_limit&&knownNumber(result.limit))lines.push("总额 "+formatAmount(result.limit,result.currency));
+  if(result.has_used&&knownNumber(result.used))lines.push("当前 used "+formatAmount(result.used,result.currency));
+  var detail=lines.length?lines.join(" · "):(result.description||"查询成功"); cell.innerHTML='<span class="tag ok">'+esc(detail)+'</span>';
+  if(result.has_limit&&knownNumber(result.limit)&&Number(result.limit)>0){var percent=Math.max(0,Math.min(100,Math.round(Number(result.fraction||0)*100))),level=percent<=0?" empty":(percent<=20?" low":"");cell.innerHTML+='<div class="quota-bar'+level+'" title="剩余 '+percent+'%"><span style="width:'+percent+'%"></span></div>';}
+  cell.innerHTML+='<div class="tip">'+esc(stamp)+(result.resetTime?" · 重置 "+esc(result.resetTime):"")+'</div>';
+}
+function formatAmount(value, currency){
+  var n = Number(value); if (!isFinite(n)) return String(value);
+  var text = Math.abs(n) >= 1000 ? n.toLocaleString(undefined, {maximumFractionDigits: 4}) : String(Math.round(n * 10000) / 10000);
+  return (currency ? currency + " " : "") + text;
+}
+function fetchBalance(key){
+  var cell=balanceCell(key),cached=balanceCache[key]; if(cell&&cached)renderBalanceResult(key,cached); if(cell&&!cached)cell.innerHTML='<span class="tag todo">查询中</span>';
+  if(inFlight[key]) return inFlight[key]; var c=credentialByKey(key);
+  inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{},30000)
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(res){return {httpOK:r.ok,body:res};});})
+    .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;recordSnapshot(key,res);}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
+    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
+    .then(function(res){delete inFlight[key];return res;}); return inFlight[key];
+}
+function fetchSelectedBalances(){ return Promise.all(Object.keys(displaySel).map(fetchBalance)); }
+function fetchAllBalances(button){
+  var names = credentialRows().map(function(c){ return c.key; });
+  if (!names.length) { msg("当前没有可查询的账号/站点", ""); return; }
+  setBusy(button, true, "查询中…"); msg("正在查询 " + names.length + " 个账号/站点余额…", "");
+  Promise.all(names.map(fetchBalance)).then(function(){ renderProviderRows(); msg("余额查询完成，结果已更新", "ok"); setBusy(button, false); }, function(e){ msg("余额查询失败：" + e.message, "err"); setBusy(button, false); });
+}
+
+function renderForms(){
+  var box = document.getElementById("forms");
+  var names = Object.keys(selected);
+  if (!names.length) { box.innerHTML = '<div class="tip">在账号/站点列表中勾选「配置」后，这里会出现独立配置表单。</div>'; document.getElementById("cfgCard").style.display = "none"; return; }
+  document.getElementById("cfgCard").style.display = "block";
+  var html = "";
+  names.forEach(function(key){
+    var c = credentialByKey(key), id = domKey(key);
+    html += '<div class="configbox" id="f-' + id + '">' +
+      '<b>' + esc(c.provider) + '</b> <span class="tip">' + esc(c.label || c.name || "账号") + ' · ' + esc(c.base_url || "无站点地址") + '</span>' +
+      '<div class="row"><div><label>厂商类型</label><select class="f-vendor" onchange="preset(' + jsArg(key) + ')">' + vendorOptions() + '</select></div>' +
+      '<div><label>站点地址 base_url</label><input class="f-base" placeholder="https://站点域名"></div></div>' +
+      '<details><summary>高级：余额接口与 JSON 路径</summary><div class="row"><div><label>endpoint</label><input class="f-ep"></div><div><label>used_endpoint</label><input class="f-usep"></div></div>' +
+      '<div class="row"><div><label>balance_path</label><input class="f-bal"></div><div><label>currency_path</label><input class="f-cur"></div><div><label>plan_path</label><input class="f-plan"></div></div>' +
+      '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div></details></div>';
+  });
+  box.innerHTML = html;
+  names.forEach(function(key){ preset(key); applyProfile(key); });
+}
+function applyProfile(key){
+  var box = document.getElementById("f-" + domKey(key));
+  var profiles = DATA && DATA.config && DATA.config.profiles, profile = profiles && profiles[key];
+  if (!profile && profiles) profile = profiles[credentialByKey(key).provider];
+  if (!profile && DATA && DATA.config && DATA.config.__top__) profile = DATA.config.__top__;
+  if (!box || !profile) return;
+  if (profile.vendor) { box.querySelector(".f-vendor").value = profile.vendor; preset(key); }
+  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){ if (profile[m[0]] !== undefined) box.querySelector(m[1]).value = profile[m[0]]; });
+}
+function vendorOptions(){
+  var h = "";
+  for (var k in PRESETS) h += '<option value="' + k + '">' + PRESETS[k].label + '</option>';
+  return h;
+}
+function preset(key){
+  var box = document.getElementById("f-" + domKey(key));
+  if (!box) return;
+  var v = box.querySelector(".f-vendor").value;
+  var p = PRESETS[v] || {};
+  box.querySelector(".f-ep").value = p.ep || "";
+  box.querySelector(".f-bal").value = p.bal || "";
+  box.querySelector(".f-cur").value = p.cur || "";
+  box.querySelector(".f-lim").value = p.lim || "";
+  box.querySelector(".f-used").value = p.used || "";
+  box.querySelector(".f-usep").value = p.usedEp || "";
+  box.querySelector(".f-scale").value = p.scale || "1";
+  box.querySelector(".f-plan").value = p.plan || "";
+}
+function collectConfig(){
+  var cfg = {};
+  if (DATA && DATA.config) {
+    cfg.enabled = DATA.config.enabled !== false;
+    if (DATA.config.priority !== undefined) cfg.priority = DATA.config.priority;
+    if (DATA.config.profiles) cfg.profiles = JSON.parse(JSON.stringify(DATA.config.profiles));
+  } else { cfg.enabled = true; }
+  if (!cfg.profiles) cfg.profiles = {};
+  cfg.selected_credentials = Object.keys(displaySel);
+  var providers = {};
+  credentialRows().forEach(function(c){ providers[c.provider] = true; });
+  cfg.providers = Object.keys(providers);
+  Object.keys(selected).forEach(function(key){
+    var box = document.getElementById("f-" + domKey(key));
+    if (!box) return;
+    var p = {}, v = box.querySelector(".f-vendor").value;
+    if (v !== "custom") p.vendor = v;
+    [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["limit_path",".f-lim"],["used_path",".f-used"],["plan_path",".f-plan"]].forEach(function(m){ var val = box.querySelector(m[1]).value.trim(); if (val) p[m[0]] = val; });
+    var sc = parseFloat(box.querySelector(".f-scale").value); if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
+    cfg.profiles[key] = p;
+  });
+  var defBase = document.getElementById("defaultBase").value.trim();
+  if (defBase && !cfg.profiles["default"]) cfg.profiles["default"] = {base_url:defBase};
+  return cfg;
+}
+function saveSelection(){
+  if (DATA && !DATA.management_configured) { showKeySetup(); document.getElementById("selectionMsg").textContent = "请先设置管理密钥"; return; }
+  var cfg = collectConfig();
+  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
+  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000).then(function(r){ return r.json(); }).then(function(r){
+    var m = document.getElementById("selectionMsg"); m.textContent = r.message || ""; m.className = r.ok ? "ok" : "err";
+    if (r.ok) { displaySelInitialized = false; setTimeout(loadData, 600); }
+  }).catch(function(e){ document.getElementById("selectionMsg").textContent = "保存失败：" + e.message; });
+}
+function saveAll(){
+  if (DATA && !DATA.management_configured) {
+    showKeySetup();
+    msg("保存需要 CPA 管理密钥：请在上方设置管理密钥后重试", "err");
+    return;
+  }
+  var cfg = collectConfig();
+  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
+  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
+    .then(function(r){ return r.json(); })
+    .then(function(r){
+      msg(r.message || "", r.ok ? "ok" : "err");
+      if (r.ok) setTimeout(loadData, 600);
+    })
+    .catch(function(e){ msg("保存失败：" + e.message, "err"); });
+}
+function showYAML(){
+  document.getElementById("yamlBox").style.display = "block";
+  document.getElementById("out").value = toYAML(collectConfig());
+  msg("已生成 YAML，可复制手动保存", "ok");
+}
+function toYAML(obj, indent){
+  var pad = indent || "";
+  var lines = [];
+  for (var k in obj) {
+    var v = obj[k];
+    if (v === null || v === undefined) continue;
+    if (typeof v === "object") { lines.push(pad + k + ":"); lines.push(toYAML(v, pad + "  ")); }
+    else if (typeof v === "boolean" || typeof v === "number") { lines.push(pad + k + ": " + v); }
+    else {
+      var s = String(v);
+      if (/[:#\[\]{}&*!|>'"%@]/.test(s) || s === "" || /^[\s]|[\s]$/.test(s)) s = '"' + s.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
+      lines.push(pad + k + ": " + s);
+    }
+  }
+  return lines.join("\n");
+}
+loadData();
+</script>
+</div></body></html>

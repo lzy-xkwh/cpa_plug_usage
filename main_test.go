@@ -9,6 +9,41 @@ import (
 	"testing"
 )
 
+func TestCredentialProfileIdentityAndSelectionPersistence(t *testing.T) {
+	if configProfileKey("codex", "https://one.example/v1/", 1) == configProfileKey("codex", "https://two.example/v1/", 1) {
+		t.Fatal("different site URLs must have different profile keys")
+	}
+	if configProfileKey("codex", "https://one.example/v1", 1) != configProfileKey("CODEX", "https://one.example/v1/", 1) {
+		t.Fatal("site key should canonicalize provider and trailing slash")
+	}
+	var cfg config
+	if err := decodeConfig([]byte("selected_credentials:\n"), &cfg); err != nil {
+		t.Fatalf("decode empty selection: %v", err)
+	}
+	if cfg.SelectedCredentials != nil {
+		t.Fatalf("empty YAML selection should remain nil only when omitted, got %#v", cfg.SelectedCredentials)
+	}
+	if err := decodeConfig([]byte("selected_credentials: []\n"), &cfg); err != nil {
+		t.Fatalf("decode YAML explicit empty selection: %v", err)
+	}
+	if cfg.SelectedCredentials == nil || len(cfg.SelectedCredentials) != 0 {
+		t.Fatalf("YAML explicit empty selection was not preserved: %#v", cfg.SelectedCredentials)
+	}
+	if err := decodeConfig([]byte(`{"selected_credentials":[]}`), &cfg); err != nil {
+		t.Fatalf("decode explicit empty selection: %v", err)
+	}
+	if cfg.SelectedCredentials == nil || len(cfg.SelectedCredentials) != 0 {
+		t.Fatalf("explicit empty selection was not preserved: %#v", cfg.SelectedCredentials)
+	}
+}
+
+func TestCredentialRequestBaseURLOverridesProviderProfile(t *testing.T) {
+	req := quotaFetchRequest{Provider: "codex", CredentialKey: "site-two", Attributes: map[string]string{"base_url": "https://two.example"}}
+	got := expandEndpoint("{base_url}/balance", "https://one.example", req)
+	if got != "https://two.example/balance" {
+		t.Fatalf("credential base URL did not override provider profile: %q", got)
+	}
+}
 func TestDecodeConfigYAMLSubset(t *testing.T) {
 	var got config
 	err := decodeConfig([]byte(`

@@ -110,14 +110,16 @@ type config struct {
 	// Providers 是「显示余额」的供应商名单（provider 名，即 profiles 的键）。
 	// 非空时 CPA 只会把这些供应商的余额查询路由给本插件；为空时沿用
 	// 旧规则（内置厂商名 + 全部档案名）。
-	Providers    []string `yaml:"providers" json:"providers"`
-	BalancePath  string   `yaml:"balance_path" json:"balance_path"`
-	UsedPath     string   `yaml:"used_path" json:"used_path"`
-	LimitPath    string   `yaml:"limit_path" json:"limit_path"`
-	CurrencyPath string   `yaml:"currency_path" json:"currency_path"`
-	PlanPath     string   `yaml:"plan_path" json:"plan_path"`
-	ResetPath    string   `yaml:"reset_path" json:"reset_path"`
-	WindowName   string   `yaml:"window_name" json:"window_name"`
+	Providers []string `yaml:"providers" json:"providers"`
+	// SelectedCredentials 非 nil 时表示用户明确保存了逐账号选择，空数组也有意义。
+	SelectedCredentials []string `yaml:"selected_credentials" json:"selected_credentials"`
+	BalancePath         string   `yaml:"balance_path" json:"balance_path"`
+	UsedPath            string   `yaml:"used_path" json:"used_path"`
+	LimitPath           string   `yaml:"limit_path" json:"limit_path"`
+	CurrencyPath        string   `yaml:"currency_path" json:"currency_path"`
+	PlanPath            string   `yaml:"plan_path" json:"plan_path"`
+	ResetPath           string   `yaml:"reset_path" json:"reset_path"`
+	WindowName          string   `yaml:"window_name" json:"window_name"`
 	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
 	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
 	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
@@ -196,12 +198,13 @@ var autoProbeStrategies = []string{"new-api", "sub2api", "one-api"}
 var strategyCache sync.Map
 
 type quotaFetchRequest struct {
-	AuthIndex   string            `json:"auth_index"`
-	AuthID      string            `json:"auth_id"`
-	Provider    string            `json:"provider"`
-	StorageJSON []byte            `json:"storage_json"`
-	Metadata    map[string]any    `json:"metadata"`
-	Attributes  map[string]string `json:"attributes"`
+	AuthIndex     string            `json:"auth_index"`
+	AuthID        string            `json:"auth_id"`
+	CredentialKey string            `json:"credential_key,omitempty"`
+	Provider      string            `json:"provider"`
+	StorageJSON   []byte            `json:"storage_json"`
+	Metadata      map[string]any    `json:"metadata"`
+	Attributes    map[string]string `json:"attributes"`
 }
 
 type lifecycleRequest struct {
@@ -419,7 +422,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.6",
+			Version:          "0.9.7",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -628,10 +631,18 @@ func normalizeDefaults(next *config) error {
 	return nil
 }
 
-// resolveProfile 按 CPA 凭据的 provider 名选择余额档案。
-func resolveProfile(cfg config, provider string) (config, error) {
+// resolveProfile 按 credential key、provider 名选择余额档案，兼容旧版 provider 配置。
+func resolveProfile(cfg config, provider string, credentialKeys ...string) (config, error) {
 	if len(cfg.Profiles) == 0 {
 		return cfg, nil
+	}
+	for _, key := range credentialKeys {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "" {
+			if profile, ok := cfg.Profiles[key]; ok {
+				return inheritGlobalRequestConfig(cfg, profile), nil
+			}
+		}
 	}
 	name := strings.ToLower(strings.TrimSpace(provider))
 	if name != "" {
@@ -642,12 +653,10 @@ func resolveProfile(cfg config, provider string) (config, error) {
 	if profile, ok := cfg.Profiles["default"]; ok {
 		return inheritGlobalRequestConfig(cfg, profile), nil
 	}
-	// 向后兼容：定义了 profiles 但顶层仍有显式 vendor/endpoint 时，
-	// 未匹配的凭据回退到顶层配置。
 	if cfg.Vendor != "" || cfg.Endpoint != "" {
 		return cfg, nil
 	}
-	return config{}, fmt.Errorf("凭据 provider %q 没有匹配的余额档案，请在 profiles 中添加 %q 或 default", provider, name)
+	return config{}, fmt.Errorf("凭据 provider %q 没有匹配的余额档案，请配置账号档案、%q 或 default", provider, name)
 }
 
 // supportedProviders 声明本插件可服务的凭据 provider 集合，供 CPA 宿主
@@ -721,6 +730,10 @@ func decodeConfig(raw []byte, out *config) error {
 			}
 			if section == "providers" {
 				out.Providers = append(out.Providers, parseScalar(strings.TrimSpace(strings.TrimPrefix(content, "- "))))
+				continue
+			}
+			if section == "selected_credentials" {
+				out.SelectedCredentials = append(out.SelectedCredentials, parseScalar(strings.TrimSpace(strings.TrimPrefix(content, "- "))))
 				continue
 			}
 			if section != "credential_paths" {
@@ -860,6 +873,12 @@ func setConfigScalar(out *config, key, value string) error {
 		out.ResetPath = value
 	case "window_name":
 		out.WindowName = value
+	case "selected_credentials":
+		if strings.TrimSpace(value) == "[]" {
+			out.SelectedCredentials = []string{}
+		} else {
+			out.SelectedCredentials = splitCredentialPaths(value)
+		}
 	default:
 		// 未知配置项不再致命：旧版本插件加载含新键的配置时忽略并写宿主日志，
 		// 避免 reconfigure 失败导致插件被宿主摘除。
@@ -929,21 +948,41 @@ func fetchQuotaWithSelectionGate(req quotaFetchRequest, enforceSelection bool) (
 	if !cfg.Enabled {
 		return quotaFetchResponse{}, errors.New("插件未启用，请在配置中设置 enabled: true")
 	}
-	// 用户勾选了「显示余额」名单后，未勾选的供应商不再参与余额查询。
-	if enforceSelection && len(cfg.Providers) > 0 {
+	if enforceSelection {
 		provider := strings.ToLower(strings.TrimSpace(req.Provider))
-		found := false
-		for _, name := range cfg.Providers {
-			if name == provider {
-				found = true
-				break
+		if cfg.SelectedCredentials != nil {
+			key := strings.TrimSpace(req.CredentialKey)
+			if key == "" {
+				key = credentialProfileKey(provider, req.Attributes["base_url"], req.AuthIndex)
+			}
+			found := false
+			for _, name := range cfg.SelectedCredentials {
+				if strings.EqualFold(strings.TrimSpace(name), key) || strings.EqualFold(strings.TrimSpace(name), provider) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return quotaFetchResponse{}, fmt.Errorf("账号 %q 未选择显示余额：请在余额面板中勾选并保存", key)
+			}
+		} else if len(cfg.Providers) > 0 {
+			found := false
+			for _, name := range cfg.Providers {
+				if name == provider {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return quotaFetchResponse{}, fmt.Errorf("供应商 %q 未选择显示余额：请在余额向导中勾选后保存", req.Provider)
 			}
 		}
-		if !found {
-			return quotaFetchResponse{}, fmt.Errorf("供应商 %q 未选择显示余额：请在余额向导中勾选后保存", req.Provider)
-		}
 	}
-	profile, profileErr := resolveProfile(cfg, req.Provider)
+	profileKeys := []string{req.CredentialKey, req.AuthIndex, req.AuthID}
+	if req.AuthIndex != "" {
+		profileKeys = append([]string{credentialProfileKey(req.Provider, req.Attributes["base_url"], req.AuthIndex)}, profileKeys...)
+	}
+	profile, profileErr := resolveProfile(cfg, req.Provider, profileKeys...)
 	if profileErr != nil || profile.Endpoint == "" {
 		// 显式配置不可用：尝试凭据自动识别（厂商名 / 域名特征 / 接口探测）。
 		auto, result, autoErr := autoDetectProfile(cfg, req)
@@ -1061,11 +1100,20 @@ func missingBaseURLError(provider string) error {
 		provider, provider)
 }
 
-// discoverBaseURL 依次从配置、凭据属性、metadata、storage_json 中寻找站点地址。
 func discoverBaseURL(cfg *config, req quotaFetchRequest) string {
+	// 同一 provider 可能对应多个站点；带凭据身份时先读该凭据的站点字段。
+	if req.CredentialKey != "" || req.AuthIndex != "" || req.AuthID != "" {
+		if baseURL := discoverRequestBaseURL(req); baseURL != "" {
+			return baseURL
+		}
+	}
 	if cfg.BaseURL != "" {
 		return strings.TrimRight(cfg.BaseURL, "/")
 	}
+	return discoverRequestBaseURL(req)
+}
+
+func discoverRequestBaseURL(req quotaFetchRequest) string {
 	keys := []string{"base_url", "baseURL", "baseUrl", "api_base", "api_base_url", "site_url", "endpoint"}
 	for _, key := range keys {
 		if v, ok := req.Attributes[key]; ok && strings.TrimSpace(v) != "" {
@@ -1372,11 +1420,15 @@ func valueAt(document any, path string) (any, bool) {
 }
 
 func expandEndpoint(endpoint string, baseURL string, req quotaFetchRequest) string {
-	if baseURL == "" {
-		baseURL = req.Attributes["base_url"]
+	requestBaseURL := req.Attributes["base_url"]
+	if requestBaseURL == "" {
+		requestBaseURL = req.Attributes["baseURL"]
+	}
+	if (req.CredentialKey != "" || req.AuthIndex != "" || req.AuthID != "") && requestBaseURL != "" {
+		baseURL = requestBaseURL
 	}
 	if baseURL == "" {
-		baseURL = req.Attributes["baseURL"]
+		baseURL = requestBaseURL
 	}
 	return strings.NewReplacer(
 		"{base_url}", strings.TrimRight(baseURL, "/"),
@@ -1571,7 +1623,7 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if provider := firstQuery(req.Query, "balance"); provider != "" {
-		payload, err := json.Marshal(fetchProviderBalance(provider))
+		payload, err := json.Marshal(fetchProviderBalance(provider, firstQuery(req.Query, "credential_key")))
 		if err != nil {
 			return nil, fmt.Errorf("编码余额结果失败: %w", err)
 		}
@@ -1645,6 +1697,10 @@ type credentialInfo struct {
 	Name        string `json:"name,omitempty"`
 	Label       string `json:"label,omitempty"`
 	BaseURL     string `json:"base_url,omitempty"`
+	ProfileKey  string `json:"profile_key,omitempty"`
+	AuthIndex   string `json:"auth_index,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Note        string `json:"note,omitempty"`
 	Disabled    bool   `json:"disabled,omitempty"`
 	RuntimeOnly bool   `json:"runtime_only,omitempty"`
 	// Source 区分凭据来源：file = 宿主凭据文件（host.auth.list），
@@ -1686,10 +1742,11 @@ func wizardDataResponse() map[string]any {
 // sanitizedPageConfig 把当前配置裁剪成页面可用的形态（不含密钥与请求头）。
 func sanitizedPageConfig(cfg config) map[string]any {
 	out := map[string]any{
-		"enabled":   cfg.Enabled,
-		"priority":  cfg.Priority,
-		"providers": cfg.Providers,
-		"profiles":  map[string]any{},
+		"enabled":              cfg.Enabled,
+		"priority":             cfg.Priority,
+		"providers":            cfg.Providers,
+		"selected_credentials": cfg.SelectedCredentials,
+		"profiles":             map[string]any{},
 	}
 	profiles := map[string]any{}
 	for name, p := range cfg.Profiles {
@@ -1818,6 +1875,7 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 		var payload struct {
 			Files []struct {
 				Provider    string `json:"provider"`
+				AuthIndex   string `json:"auth_index"`
 				Name        string `json:"name"`
 				Label       string `json:"label"`
 				Disabled    bool   `json:"disabled"`
@@ -1838,7 +1896,9 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 				}
 				addCredential(credentialInfo{
 					Provider: provider, Name: name, Label: label,
-					BaseURL: baseURL, Disabled: file.Disabled, RuntimeOnly: file.RuntimeOnly,
+					BaseURL: baseURL, AuthIndex: file.AuthIndex,
+					ProfileKey: credentialProfileKey(provider, baseURL, file.AuthIndex),
+					Disabled:   file.Disabled, RuntimeOnly: file.RuntimeOnly,
 					Source: "file",
 				}, file.Disabled)
 			}
@@ -1908,12 +1968,13 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 // configCredential 记录一条配置文件凭据。apiKey 仅在服务端内部使用，
 // 绝不出现在任何返回给页面的数据里。
 type configCredential struct {
-	Provider string
-	Name     string
-	Label    string
-	BaseURL  string
-	APIKey   string
-	Disabled bool
+	Provider   string
+	Name       string
+	Label      string
+	BaseURL    string
+	APIKey     string
+	ProfileKey string
+	Disabled   bool
 }
 
 // configProviderCredentialRecords 通过 CPA 管理 API 读取 config.yaml 中的
@@ -1968,11 +2029,12 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 	}) {
 		for i, entry := range entries {
 			credentials = append(credentials, configCredential{
-				Provider: provider,
-				Name:     fmt.Sprintf("%s-%d", provider, i+1),
-				Label:    label,
-				BaseURL:  strings.TrimSpace(entry.BaseURL),
-				APIKey:   strings.TrimSpace(entry.APIKey),
+				Provider:   provider,
+				Name:       fmt.Sprintf("%s-%d", provider, i+1),
+				Label:      label,
+				ProfileKey: configProfileKey(provider, entry.BaseURL, i+1),
+				BaseURL:    strings.TrimSpace(entry.BaseURL),
+				APIKey:     strings.TrimSpace(entry.APIKey),
 			})
 		}
 	}
@@ -2010,12 +2072,13 @@ func configProviderCredentialRecords(managementKey string) ([]configCredential, 
 				apiKey = strings.TrimSpace(compat.APIKeyEntries[i].APIKey)
 			}
 			credentials = append(credentials, configCredential{
-				Provider: provider,
-				Name:     fmt.Sprintf("%s-%d", provider, i+1),
-				Label:    strings.TrimSpace(compat.Name) + "（配置文件）",
-				BaseURL:  strings.TrimSpace(compat.BaseURL),
-				APIKey:   apiKey,
-				Disabled: compat.Disabled,
+				Provider:   provider,
+				Name:       fmt.Sprintf("%s-%d", provider, i+1),
+				Label:      strings.TrimSpace(compat.Name) + "（配置文件）",
+				ProfileKey: configProfileKey(provider, compat.BaseURL, i+1),
+				BaseURL:    strings.TrimSpace(compat.BaseURL),
+				APIKey:     apiKey,
+				Disabled:   compat.Disabled,
 			})
 		}
 	}
@@ -2029,12 +2092,13 @@ func configProviderCredentials(managementKey string) ([]credentialInfo, string) 
 	out := make([]credentialInfo, 0, len(records))
 	for _, record := range records {
 		out = append(out, credentialInfo{
-			Provider: record.Provider,
-			Name:     record.Name,
-			Label:    record.Label,
-			BaseURL:  record.BaseURL,
-			Disabled: record.Disabled,
-			Source:   "config",
+			Provider:   record.Provider,
+			Name:       record.Name,
+			Label:      record.Label,
+			BaseURL:    record.BaseURL,
+			ProfileKey: record.ProfileKey,
+			Disabled:   record.Disabled,
+			Source:     "config",
 		})
 	}
 	return out, note
@@ -2046,11 +2110,13 @@ type providerCredential struct {
 	baseURL     string
 }
 
-// credentialForProvider 定位某供应商的第一条可用凭据：
-// 优先凭据文件（host.auth.list → host.auth.get），找不到且配置了
-// 管理密钥时回退到 config.yaml 的 API-Key 供应商。
-func credentialForProvider(provider string) (providerCredential, error) {
+// credentialForProvider 定位指定账号的可用凭据；credentialKey 为空时兼容旧版取第一条。
+func credentialForProvider(provider string, credentialKey ...string) (providerCredential, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	wanted := ""
+	if len(credentialKey) > 0 {
+		wanted = strings.TrimSpace(credentialKey[0])
+	}
 	raw, err := hostCallMethod("host.auth.list", nil)
 	if err == nil {
 		var payload struct {
@@ -2063,6 +2129,10 @@ func credentialForProvider(provider string) (providerCredential, error) {
 		if json.Unmarshal(raw, &payload) == nil {
 			for _, file := range payload.Files {
 				if strings.ToLower(strings.TrimSpace(file.Provider)) != provider || file.Disabled || file.AuthIndex == "" {
+					continue
+				}
+				profileKey := credentialProfileKey(provider, "", file.AuthIndex)
+				if wanted != "" && wanted != file.AuthIndex && wanted != profileKey {
 					continue
 				}
 				getRequest, _ := json.Marshal(map[string]string{"auth_index": file.AuthIndex})
@@ -2082,6 +2152,9 @@ func credentialForProvider(provider string) (providerCredential, error) {
 		if records, _ := configProviderCredentialRecords(key); len(records) > 0 {
 			for _, record := range records {
 				if record.Provider != provider || record.Disabled || record.APIKey == "" {
+					continue
+				}
+				if wanted != "" && wanted != record.ProfileKey {
 					continue
 				}
 				document, _ := json.Marshal(map[string]string{
@@ -2112,19 +2185,24 @@ type providerBalanceResult struct {
 // fetchProviderBalance 在服务端为指定供应商执行一次余额查询，
 // 复用 quota.fetch 的完整管线（档案解析 → 自动识别 → 响应解析）。
 // 凭据（storage_json / api_key）只在本函数内部使用，不下发页面。
-func fetchProviderBalance(provider string) providerBalanceResult {
+func fetchProviderBalance(provider string, credentialKeys ...string) providerBalanceResult {
+	credentialKey := ""
+	if len(credentialKeys) > 0 {
+		credentialKey = strings.TrimSpace(credentialKeys[0])
+	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		return providerBalanceResult{Message: "缺少供应商名"}
 	}
-	credential, err := credentialForProvider(provider)
+	credential, err := credentialForProvider(provider, credentialKey)
 	if err != nil {
 		return providerBalanceResult{Message: err.Error()}
 	}
 	req := quotaFetchRequest{
-		Provider:    provider,
-		StorageJSON: credential.storageJSON,
-		Attributes:  map[string]string{"base_url": credential.baseURL},
+		Provider:      provider,
+		CredentialKey: credentialKey,
+		StorageJSON:   credential.storageJSON,
+		Attributes:    map[string]string{"base_url": credential.baseURL},
 	}
 	resp, err := fetchQuotaWithSelectionGate(req, false)
 	if err != nil {
@@ -2152,23 +2230,24 @@ func fetchProviderBalance(provider string) providerBalanceResult {
 // （向导在仅配置 default 档案时会把档案字段提升到顶层提交）。
 // 密钥、认证头、凭据路径、管理地址与 allow_insecure_http 始终拒绝。
 var wizardTopLevelKeys = map[string]struct{}{
-	"enabled":       {},
-	"priority":      {},
-	"profiles":      {},
-	"providers":     {},
-	"vendor":        {},
-	"base_url":      {},
-	"endpoint":      {},
-	"used_endpoint": {},
-	"used_scale":    {},
-	"method":        {},
-	"balance_path":  {},
-	"used_path":     {},
-	"limit_path":    {},
-	"currency_path": {},
-	"plan_path":     {},
-	"reset_path":    {},
-	"window_name":   {},
+	"enabled":              {},
+	"priority":             {},
+	"profiles":             {},
+	"providers":            {},
+	"selected_credentials": {},
+	"vendor":               {},
+	"base_url":             {},
+	"endpoint":             {},
+	"used_endpoint":        {},
+	"used_scale":           {},
+	"method":               {},
+	"balance_path":         {},
+	"used_path":            {},
+	"limit_path":           {},
+	"currency_path":        {},
+	"plan_path":            {},
+	"reset_path":           {},
+	"window_name":          {},
 }
 
 var wizardProfileKeys = map[string]struct{}{
@@ -2241,6 +2320,12 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 				return nil, errors.New("providers 必须是字符串数组")
 			}
 			clean[key] = providers
+		case "selected_credentials":
+			var selected []string
+			if err := json.Unmarshal(raw, &selected); err != nil {
+				return nil, errors.New("selected_credentials 必须是字符串数组")
+			}
+			clean[key] = selected
 		default:
 			var value string
 			if err := json.Unmarshal(raw, &value); err != nil {
@@ -2358,538 +2443,3 @@ func saveConfigViaManagementAPI(saveJSON string) map[string]any {
 	}
 	return map[string]any{"ok": true, "message": "已保存！CPA 正在热加载新配置。"}
 }
-
-const wizardHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>api-balance 余额配置向导</title>
-<style>
-:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--soft:#eff6ff}
-*{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-body{margin:0;background:var(--bg);color:var(--tx)}
-.wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:var(--mu);font-size:13px;margin-bottom:20px}
-.card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
-.card h2{font-size:15px;margin:0 0 10px}
-.overview{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 14px}
-.metric{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;min-width:0}
-.metric .value{font-size:22px;font-weight:700;line-height:1.2}
-.metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
-.metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
-.filterbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}.filterbar input,.filterbar select{max-width:240px}.filterbar .tip{margin:0}
-label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
-input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
-.row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
-.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
-.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
-.table-scroll{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
-th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
-th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
-.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
-.tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
-.quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
-.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
-details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
-textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
-.tip{font-size:12px;color:var(--mu);margin-top:6px}
-#msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
-.btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
-@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}}
-
-</style>
-</head>
-<body><div class="wrap">
-<h1>API 余额查询 · 配置向导</h1>
-<div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
-<div id="globalMsg" role="status" aria-live="polite"></div>
-<div class="overview" aria-label="余额概览">
- <div class="metric info"><div class="value" id="metricTotal">—</div><div class="label">已发现供应商</div></div>
- <div class="metric ok"><div class="value" id="metricSupported">—</div><div class="label">可直接查询</div></div>
- <div class="metric warn"><div class="value" id="metricTodo">—</div><div class="label">需要配置</div></div>
- <div class="metric"><div class="value" id="metricQueried">0</div><div class="label">本次已查询</div></div>
- <div class="metric"><div class="value" id="metricCredentials">—</div><div class="label">凭据总数</div></div>
- <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
-</div>
-
-<div class="card" id="setupCard" style="display:none">
-<h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">你使用的是 CPAMP Full/Manager 页面时，这里的“当前页面管理密钥”填写 CPAMP 登录用的管理员密钥；CPAMP 会在服务端把它换成已保存的 CPA Management Key，插件不会保存 <code>cpamp_...</code>。如果直接访问 CPA 的管理页面，则填写 CPA 配置 <code>remote-management.secret-key</code> 的原始明文。下面的 CPA 地址必须是 CPAMP 服务端或插件所在环境能够访问的 CPA 地址，例如 <code>http://192.168.1.2:8137</code>，不能填 CPAMP 的 <code>:18317</code>。密钥只在服务端处理，不会返回页面。<b style="color:var(--err)">连续认证失败 5 次可能触发 CPA 临时封禁；确认地址和密钥后只提交一次。</b></div>
-<div class="row" style="margin-top:8px">
-  <div style="flex:2"><input id="cpaurl" type="url" autocomplete="off" placeholder="CPA 地址，例如 http://192.168.1.2:8137"></div>
-  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="当前页面管理密钥：CPAMP 管理员密钥或 CPA Management Key"></div>
-  <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存连接</button></div>
-</div>
-</div>
-
-<div class="card">
-<h2>① 已配置供应商的余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
-<div class="filterbar">
- <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
- <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
- <span class="tip" id="providerCount"></span>
-</div>
-<div class="table-scroll"><table><thead><tr><th style="width:20%">供应商</th><th style="width:13%">状态</th><th style="width:26%">余额 / 用量</th><th>说明</th><th style="width:120px">操作</th></tr></thead>
-<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
-<div class="tip" id="provNote"></div>
-<details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
-<div class="tip" id="credInfo"></div>
-<table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
-</details>
-</div>
-
-<div class="card" id="cfgCard" style="display:none">
-<h2>② 为选中的供应商配置余额查询</h2>
-<div id="forms"></div>
-<div class="row" style="margin-top:10px">
-  <div style="flex:2"><label>可选：为简单站点补一个通用档案（键 default，兜底未匹配凭据）</label>
-  <input id="defaultBase" placeholder="留空 = 不添加"></div>
-</div>
-<div style="margin-top:12px">
-  <button class="btn primary" onclick="saveAll()">保存到 CPA</button>
-  <button class="btn" onclick="showYAML()">仅生成 YAML</button>
-  <span id="msg"></span>
-</div>
-<div id="yamlBox" style="display:none;margin-top:10px">
-  <label>生成的配置（YAML，可复制到插件配置手动保存）</label>
-  <textarea id="out" readonly></textarea>
-</div>
-</div>
-
-<script>
-var PRESETS = {
-  "deepseek":   {label:"DeepSeek 官方", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
-  "moonshot":   {label:"Moonshot Kimi 官方", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
-  "openrouter": {label:"OpenRouter", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
-  "one-api":    {label:"one-api 系中转站", lim:"hard_limit_usd", used:"total_usage", scale:"0.01"},
-  "new-api":    {label:"New API 站点", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
-  "sub2api":    {label:"sub2api 站点", bal:"remaining", cur:"unit", plan:"planName"},
-  "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
-};
-var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
-var DATA = null;
-var selected = {};
-var displaySel = {};
-var displaySelInitialized = false;
-var queried = {};
-var balanceCache = {};
-var keySetupOpened = false;
-function updateOverview(list){
-  list = list || (DATA && DATA.providers) || [];
-  var supported = 0, todo = 0, credentials = 0, sites = 0;
-  list.forEach(function(p){
-    if (p.status === "ok") supported++;
-    if (p.status === "configurable") todo++;
-    credentials += Number(p.credential_count || 0);
-    sites += Number(p.site_count || 0);
-  });
-  var total = document.getElementById("metricTotal");
-  var direct = document.getElementById("metricSupported");
-  var pending = document.getElementById("metricTodo");
-  var done = document.getElementById("metricQueried");
-  var cred = document.getElementById("metricCredentials");
-  var site = document.getElementById("metricSites");
-  if (total) total.textContent = list.length;
-  if (direct) direct.textContent = supported;
-  if (pending) pending.textContent = todo;
-  if (done) done.textContent = Object.keys(queried).length;
-  if (cred) cred.textContent = credentials;
-  if (site) site.textContent = sites;
-}
-
-function toggleKeySetup(){
-  keySetupOpened = !keySetupOpened;
-  document.getElementById("setupCard").style.display = keySetupOpened ? "block" : "none";
-  if (keySetupOpened) document.getElementById("mgmtkey").focus();
-}
-function showKeySetup(){
-  keySetupOpened = true;
-  document.getElementById("setupCard").style.display = "block";
-  document.getElementById("mgmtkey").focus();
-}
-function managementErrorText(status, body){
-  var detail = body && (body.error || body.message) ? String(body.error || body.message) : "";
-  var lower = detail.toLowerCase();
-  if (status === 401) {
-    if (/bcrypt|hash|compare|invalid management key/.test(lower)) return "CPA 拒绝了管理密钥（HTTP 401）。请填写 remote-management.secret-key 启动前配置的原始明文，不要填写 CPA 自动写回的 bcrypt 哈希、普通 API Key 或插件 management_key 字段名。";
-    return "管理密钥校验失败（HTTP 401）。请核对 CPA config.yaml 的 remote-management.secret-key 原始明文；配置中的 bcrypt 哈希不能反向还原为密码。";
-  }
-  if (status === 403) {
-    if (/banned|ban|temporar/.test(lower)) return "已触发 CPA 防爆破封禁：连续认证失败后本机 IP 会临时封禁约 30 分钟，期间即使密钥正确也会返回 403。等待解封或重启 CPA 后，只粘贴一次 remote-management.secret-key 的原始明文。";
-    if (/disabled|remote/.test(lower)) return "CPA 拒绝了远程管理（HTTP 403）。若浏览器与 CPA 不在同一台机器，请在 CPA 配置中设置 remote-management.allow-remote: true；本机访问通常不需要开启此项。";
-    if (/not set|secret.key|management key/.test(lower)) return "CPA 尚未启用管理 API（HTTP 403）。请在 remote-management.secret-key 设置管理密钥后重启 CPA，再输入该原始明文。";
-    return "保存被拒绝（HTTP 403）：" + (detail || "请检查 remote-management.allow-remote 与 secret-key 配置");
-  }
-  return "保存失败（HTTP " + status + "）" + (detail ? "：" + detail : "");
-}
-function saveKey(){
-  var key = document.getElementById("mgmtkey").value.trim();
-  var cpaURL = document.getElementById("cpaurl").value.trim();
-  var button = document.getElementById("saveKeyBtn");
-  if (!cpaURL) { msg("请输入 CPA 地址，例如 http://192.168.1.2:8137", "err"); return; }
-  if (!key) { msg("请输入当前页面管理密钥", "err"); return; }
-  setBusy(button, true, "保存中…");
-  msg("正在通过当前页面认证保存 CPA 连接…", "");
-  fetchTimeout("/v0/management/plugins/api-balance/config-wizard/key", {
-    method: "POST",
-    headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key, "X-Management-Key": key},
-    body: JSON.stringify({management_url: cpaURL})
-  }, 15000).then(function(r){
-    return r.json().catch(function(){ return {}; }).then(function(body){
-      if (!r.ok || !body.result || body.result.ok === false) {
-        var status = r.status || 500;
-        var result = body.result || body;
-        msg(managementErrorText(status, result), "err");
-        return false;
-      }
-      msg((body.result && body.result.message) || "CPA 连接已保存，正在刷新供应商列表…", "ok");
-      document.getElementById("mgmtkey").value = "";
-      keySetupOpened = false;
-      setTimeout(function(){ loadData(); }, 600);
-      return true;
-    });
-  }).catch(function(e){ msg("保存 CPA 连接失败：" + e.message, "err"); })
-    .then(function(){ setBusy(button, false); });
-}
-function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function jsArg(s){ return esc(JSON.stringify(String(s == null ? "" : s))); }
-function msg(text, cls){
-  ["globalMsg", "msg"].forEach(function(id){
-    var m = document.getElementById(id);
-    if (m) { m.textContent = text || ""; m.className = cls || ""; }
-  });
-}
-function setBusy(button, busy, label){
-  if (!button) return;
-  if (busy) {
-    button.dataset.originalLabel = button.textContent;
-    button.textContent = label || "处理中…";
-    button.disabled = true;
-  } else {
-    button.textContent = button.dataset.originalLabel || button.textContent;
-    button.disabled = false;
-  }
-}
-// 余额查询完全在服务端完成：凭据与管理密钥都取自插件配置（CPA
-// config.yaml 内），页面只拿到聚合后的余额数字，接触不到任何密钥。
-function fetchTimeout(url, opts, ms){
-  opts = opts || {};
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-    opts.signal = AbortSignal.timeout(ms || 10000);
-  }
-  return fetch(url, opts);
-}
-function loadError(text){
-  document.getElementById("provRows").innerHTML = '<tr><td colspan="5" style="color:var(--err);font-size:13px">' + esc(text) + '</td></tr>';
-  document.getElementById("provNote").textContent = "";
-  msg(text, "err");
-}
-function loadData(button){
-  setBusy(button, true, "刷新中…");
-  msg("正在刷新供应商列表…", "");
-  fetchTimeout("/v0/resource/plugins/api-balance/config-data", {}, 10000).then(function(r){
-    if (r.status === 404) { loadError("数据端点不存在（404）：当前运行的插件还是旧版本。请到 插件商店 把 api-balance 更新到最新版，然后刷新本页。"); return null; }
-    if (!r.ok) { loadError("加载数据失败（HTTP " + r.status + "），请刷新重试。"); return null; }
-    return r.json().catch(function(){ throw new Error("服务器返回的不是有效 JSON"); });
-  }).then(function(d){
-    if (!d) return;
-    DATA = d;
-    var urlInput = document.getElementById("cpaurl");
-    if (urlInput && d.management_url && !urlInput.value) urlInput.value = d.management_url;
-    var note = d.providers_note || "";
-    if (d.management_configured && /HTTP 40[13]/.test(note)) {
-      keySetupOpened = true;
-    }
-    document.getElementById("setupCard").style.display = (!d.management_configured || keySetupOpened) ? "block" : "none";
-    renderProviders(d);
-    renderForms();
-    fetchSelectedBalances();
-    msg("供应商列表已刷新", "ok");
-  }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); })
-    .then(function(){ setBusy(button, false); });
-}
-function renderCredentials(d){
-  var list = d.credentials || [];
-  var fromConfig = list.filter(function(c){ return c.source === "config"; }).length;
-  var text = "共 " + list.length + " 条凭据：凭据文件 " + (list.length - fromConfig) + " 条（host.auth.list），配置文件 " + fromConfig + " 条（管理 API）。若与「AI 提供商」页签的配置数不一致，请把本行截图反馈给插件作者。";
-  document.getElementById("credInfo").textContent = text;
-  var rows = "";
-  list.forEach(function(c){
-    rows += "<tr><td>" + esc(c.provider) + "</td><td class='tip'>" + esc(c.name || c.label || "") + "</td><td class='tip'>" + esc(c.base_url || "") + "</td><td class='tip'>" + (c.source === "config" ? "配置文件 · " : "") + (c.disabled ? "已停用" : "启用") + (c.runtime_only ? " · 运行时" : "") + "</td></tr>";
-  });
-  document.getElementById("credRows").innerHTML = rows || "<tr><td colspan='4' class='tip'>（空）</td></tr>";
-}
-function renderProviders(d){
-  renderCredentials(d);
-  var list = d.providers || [];
-  DATA = d;
-  updateOverview(list);
-  if (!displaySelInitialized) {
-    displaySelInitialized = true;
-    var configured = d.config && d.config.providers && d.config.providers.length;
-    (d.config && d.config.providers || []).forEach(function(name){ displaySel[name] = true; });
-    if (!configured) list.forEach(function(p){ if (p.status === "ok") displaySel[p.provider] = true; });
-  }
-  renderProviderRows();
-  document.getElementById("provNote").textContent = d.providers_note || "";
-}
-function renderProviderRows(){
-  var rows = document.getElementById("provRows");
-  var list = (DATA && DATA.providers) || [];
-  var query = ((document.getElementById("providerSearch") || {}).value || "").trim().toLowerCase();
-  var status = ((document.getElementById("providerStatus") || {}).value || "");
-  var filtered = list.filter(function(p){
-    if (status && p.status !== status) return false;
-    if (!query) return true;
-    return [p.provider, p.label, p.note].join(" ").toLowerCase().indexOf(query) >= 0;
-  });
-  var count = document.getElementById("providerCount");
-  if (count) count.textContent = "显示 " + filtered.length + " / " + list.length;
-  if (!list.length) {
-    rows.innerHTML = '<tr><td colspan="5" class="tip">' + esc((DATA && DATA.providers_note) || "未发现已配置的供应商。") + '</td></tr>';
-    return;
-  }
-  var html = "";
-  filtered.forEach(function(p){
-    var tag, note;
-    if (p.status === "ok") { tag = '<span class="tag ok">已支持</span>'; note = esc(p.note); }
-    else if (p.status === "unsupported") { tag = '<span class="tag no">无法查询</span>'; note = esc(p.note); }
-    else { tag = '<span class="tag todo">可配置</span>'; note = esc(p.note); }
-    var stats = (p.credential_count || 0) + " 凭据 · " + (p.active_count || 0) + " 启用";
-    if (p.site_count) stats += " · " + p.site_count + " 站点";
-    var action = "";
-    var checked = displaySel[p.provider] ? " checked" : "";
-    action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto"' + checked + ' onchange="toggleDisplay(' + jsArg(p.provider) + ',this.checked)"> 显示</label>';
-    if (p.status === "configurable") {
-      action += '<label style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--tx)"><input type="checkbox" style="width:auto" onchange="togglePick(' + jsArg(p.provider) + ',this.checked)"> 配置</label>';
-    }
-    html += '<tr><td><b>' + esc(p.provider) + '</b>' + (p.label ? '<div class="tip">' + esc(p.label) + '</div>' : '') + '<div class="tip">' + stats + '</div></td><td>' + tag + '</td><td id="bal-' + esc(p.provider) + '" class="tip">—</td><td class="tip">' + note + '</td><td>' + action + '</td></tr>';
-  });
-  rows.innerHTML = html || '<tr><td colspan="5" class="tip">没有匹配的供应商</td></tr>';
-  filtered.forEach(function(p){ if (balanceCache[p.provider]) renderBalanceResult(p.provider, balanceCache[p.provider]); });
-}
-
-function togglePick(provider, on){
-  if (on) selected[provider] = true; else delete selected[provider];
-  renderForms();
-}
-function toggleDisplay(provider, on){
-  if (on) displaySel[provider] = true; else delete displaySel[provider];
-  if (on) fetchBalance(provider);
-}
-function balanceCell(provider){
-  return document.getElementById("bal-" + provider);
-}
-function renderBalanceResult(provider, result){
-  var cell = balanceCell(provider);
-  if (!cell) return;
-  if (!result || !result.ok) {
-    cell.innerHTML = '<span class="tag no">查询失败</span><div class="tip err">' + esc((result && result.message) || "请检查配置") + '</div>';
-    return;
-  }
-  var lines = [];
-  if (result.balance !== undefined) lines.push("余额 " + formatAmount(result.balance, result.currency));
-  if (result.has_limit) lines.push("总额 " + formatAmount(result.limit, result.currency));
-  if (result.has_used) lines.push("已用 " + formatAmount(result.used, result.currency));
-  var detail = lines.length ? lines.join(" · ") : (result.description || "查询成功");
-  cell.innerHTML = '<span class="tag ok">' + esc(detail) + '</span>';
-  if (result.has_limit && Number(result.limit) > 0) {
-    var percent = Math.max(0, Math.min(100, Math.round(Number(result.fraction || 0) * 100)));
-    var level = percent <= 0 ? " empty" : (percent <= 20 ? " low" : "");
-    cell.innerHTML += '<div class="quota-bar' + level + '" title="剩余 ' + percent + '%"><span style="width:' + percent + '%"></span></div><div class="tip">剩余 ' + percent + '% · 刚刚更新</div>';
-  } else {
-    cell.innerHTML += '<div class="tip">刚刚更新 · 未提供总额度</div>';
-  }
-}
-function formatAmount(value, currency){
-  var n = Number(value);
-  if (!isFinite(n)) return String(value);
-  var text = Math.abs(n) >= 1000 ? n.toLocaleString(undefined, {maximumFractionDigits: 4}) : String(Math.round(n * 10000) / 10000);
-  return (currency ? currency + " " : "") + text;
-}
-function fetchBalance(provider){
-  var cell = balanceCell(provider);
-  var cached = balanceCache[provider];
-  if (cell && cached) renderBalanceResult(provider, cached);
-  if (cell) cell.innerHTML = cached ? cell.innerHTML : '<span class="tag todo">查询中</span>';
-  return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance=" + encodeURIComponent(provider), {}, 30000)
-    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(res){ return {httpOK:r.ok, body:res}; }); })
-    .then(function(result){
-      var res = result.body;
-      queried[provider] = true;
-      if (result.httpOK && res && res.ok) {
-        balanceCache[provider] = res;
-        renderBalanceResult(provider, res);
-      } else {
-        renderBalanceResult(provider, {ok:false, message:(res && res.message) || (result.httpOK ? "请检查配置" : "HTTP 请求失败")});
-      }
-      updateOverview();
-    })
-    .catch(function(e){
-      queried[provider] = true;
-      renderBalanceResult(provider, {ok:false, message:e.message});
-      updateOverview();
-    });
-}
-
-function fetchSelectedBalances(){
-  return Promise.all(Object.keys(displaySel).map(function(name){ return fetchBalance(name); }));
-}
-function fetchAllBalances(button){
-  var list = (DATA && DATA.providers) || [];
-  var names = list.map(function(p){ return p.provider; });
-  if (!names.length) { msg("当前没有可查询的供应商", ""); return; }
-  setBusy(button, true, "查询中…");
-  msg("正在查询 " + names.length + " 个供应商余额…", "");
-  Promise.all(names.map(function(name){ return fetchBalance(name); })).then(function(){
-    renderProviderRows();
-    msg("余额查询完成，结果已更新", "ok");
-    setBusy(button, false);
-  }, function(e){
-    msg("余额查询失败：" + e.message, "err");
-    setBusy(button, false);
-  });
-}
-function renderForms(){
-  var box = document.getElementById("forms");
-  var names = Object.keys(selected);
-  if (!names.length) { box.innerHTML = '<div class="tip">在上方勾选「可配置」的供应商后，这里会出现对应表单。已支持的供应商无需任何操作。</div>'; document.getElementById("cfgCard").style.display = "none"; return; }
-  document.getElementById("cfgCard").style.display = "block";
-  var html = "";
-  names.forEach(function(name){
-    html += '<div class="configbox" id="f-' + esc(name) + '">' +
-      '<b>' + esc(name) + '</b> <span class="tip">（对应凭据 provider 名，已自动填好）</span>' +
-      '<div class="row">' +
-        '<div><label>厂商类型（选了会自动带出余额字段路径）</label><select class="f-vendor" onchange="preset(\'' + esc(name) + '\')">' + vendorOptions() + '</select></div>' +
-        '<div><label>站点地址 base_url（可留空，凭据里一般已有）</label><input class="f-base" placeholder="https://站点域名"></div>' +
-      '</div>' +
-      '<details><summary>高级：余额接口与 JSON 路径（厂商预设已填默认值）</summary>' +
-        '<div class="row">' +
-          '<div><label>endpoint（余额接口，留空=自动识别）</label><input class="f-ep"></div>' +
-          '<div><label>used_endpoint（可选）</label><input class="f-usep"></div>' +
-        '</div>' +
-        '<div class="row">' +
-          '<div><label>balance_path</label><input class="f-bal"></div>' +
-          '<div><label>currency_path</label><input class="f-cur"></div>' +
-          '<div><label>plan_path</label><input class="f-plan"></div>' +
-        '</div>' +
-        '<div class="row">' +
-          '<div><label>limit_path</label><input class="f-lim"></div>' +
-          '<div><label>used_path</label><input class="f-used"></div>' +
-          '<div><label>used_scale</label><input class="f-scale" value="1"></div>' +
-        '</div>' +
-      '</details></div>';
-  });
-  box.innerHTML = html;
-  names.forEach(function(name){ preset(name); applyProfile(name); });
-  var def = DATA && DATA.config && DATA.config.profiles && DATA.config.profiles.default;
-  var defaultBase = document.getElementById("defaultBase");
-  if (defaultBase && def && def.base_url && !defaultBase.value) defaultBase.value = def.base_url;
-}
-function applyProfile(name){
-  var box = document.getElementById("f-" + name);
-  var profiles = DATA && DATA.config && DATA.config.profiles;
-  var profile = profiles && profiles[name];
-  if (!profile && DATA && DATA.config && DATA.config.__top__) profile = DATA.config.__top__;
-  if (!box || !profile) return;
-  if (profile.vendor) {
-    box.querySelector(".f-vendor").value = profile.vendor;
-    preset(name);
-  }
-  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){
-    if (profile[m[0]] !== undefined) box.querySelector(m[1]).value = profile[m[0]];
-  });
-}
-function vendorOptions(){
-  var h = "";
-  for (var k in PRESETS) h += '<option value="' + k + '">' + PRESETS[k].label + '</option>';
-  return h;
-}
-function preset(name){
-  var box = document.getElementById("f-" + name);
-  if (!box) return;
-  var v = box.querySelector(".f-vendor").value;
-  var p = PRESETS[v] || {};
-  box.querySelector(".f-ep").value = p.ep || "";
-  box.querySelector(".f-bal").value = p.bal || "";
-  box.querySelector(".f-cur").value = p.cur || "";
-  box.querySelector(".f-lim").value = p.lim || "";
-  box.querySelector(".f-used").value = p.used || "";
-  box.querySelector(".f-usep").value = p.usedEp || "";
-  box.querySelector(".f-scale").value = p.scale || "1";
-  box.querySelector(".f-plan").value = p.plan || "";
-}
-function collectConfig(){
-  var cfg = {};
-  if (DATA && DATA.config) {
-    cfg.enabled = DATA.config.enabled !== false;
-    if (DATA.config.priority !== undefined) cfg.priority = DATA.config.priority;
-    if (DATA.config.profiles) cfg.profiles = JSON.parse(JSON.stringify(DATA.config.profiles));
-  } else { cfg.enabled = true; }
-  if (!cfg.profiles) cfg.profiles = {};
-  cfg.providers = Object.keys(displaySel);
-  Object.keys(selected).forEach(function(name){
-    var box = document.getElementById("f-" + name);
-    var p = {};
-    var v = box.querySelector(".f-vendor").value;
-    if (v !== "custom") p.vendor = v;
-    [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["limit_path",".f-lim"],["used_path",".f-used"],["plan_path",".f-plan"]].forEach(function(m){
-      var val = box.querySelector(m[1]).value.trim();
-      if (val) p[m[0]] = val;
-    });
-    var sc = parseFloat(box.querySelector(".f-scale").value);
-    if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
-    cfg.profiles[name] = p;
-  });
-  var defBase = document.getElementById("defaultBase").value.trim();
-  if (defBase && !cfg.profiles["default"]) cfg.profiles["default"] = {base_url: defBase};
-  if (Object.keys(cfg.profiles).length === 1 && cfg.profiles["default"]) {
-    var only = cfg.profiles["default"];
-    delete cfg.profiles["default"];
-    for (var k in only) cfg[k] = only[k];
-  }
-  return cfg;
-}
-function saveAll(){
-  if (DATA && !DATA.management_configured) {
-    showKeySetup();
-    msg("保存需要 CPA 管理密钥：请在上方设置管理密钥后重试", "err");
-    return;
-  }
-  var cfg = collectConfig();
-  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
-  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
-    .then(function(r){ return r.json(); })
-    .then(function(r){
-      msg(r.message || "", r.ok ? "ok" : "err");
-      if (r.ok) setTimeout(loadData, 600);
-    })
-    .catch(function(e){ msg("保存失败：" + e.message, "err"); });
-}
-function showYAML(){
-  document.getElementById("yamlBox").style.display = "block";
-  document.getElementById("out").value = toYAML(collectConfig());
-  msg("已生成 YAML，可复制手动保存", "ok");
-}
-function toYAML(obj, indent){
-  var pad = indent || "";
-  var lines = [];
-  for (var k in obj) {
-    var v = obj[k];
-    if (v === null || v === undefined) continue;
-    if (typeof v === "object") { lines.push(pad + k + ":"); lines.push(toYAML(v, pad + "  ")); }
-    else if (typeof v === "boolean" || typeof v === "number") { lines.push(pad + k + ": " + v); }
-    else {
-      var s = String(v);
-      if (/[:#\[\]{}&*!|>'"%@]/.test(s) || s === "" || /^[\s]|[\s]$/.test(s)) s = '"' + s.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
-      lines.push(pad + k + ": " + s);
-    }
-  }
-  return lines.join("\n");
-}
-loadData();
-</script>
-</div></body></html>`
