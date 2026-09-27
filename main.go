@@ -131,18 +131,18 @@ type config struct {
 // vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
 // 预设只填补未显式配置的字段，用户配置始终优先。
 type vendorPreset struct {
-	Endpoint          string
-	UsedEndpoint      string
-	UsedScale         float64
-	BalanceScale      float64
-	LimitScale        float64
-	CredentialPrefix  string
-	BalancePath       string
-	UsedPath     string
-	LimitPath    string
-	CurrencyPath string
-	PlanPath     string
-	WindowName   string
+	Endpoint         string
+	UsedEndpoint     string
+	UsedScale        float64
+	BalanceScale     float64
+	LimitScale       float64
+	CredentialPrefix string
+	BalancePath      string
+	UsedPath         string
+	LimitPath        string
+	CurrencyPath     string
+	PlanPath         string
+	WindowName       string
 }
 
 var vendorPresets = map[string]vendorPreset{
@@ -1362,37 +1362,36 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 					continue
 				}
 				percentage, hasPercentage := numberAt(item, "percentage")
-				used, hasUsed := numberAt(item, "currentValue")
-				limit, hasLimit := numberAt(item, "usage")
 				remaining, hasRemaining := numberAt(item, "remaining")
-				if !hasRemaining && hasPercentage {
-					remaining = 100 - percentage
-					hasRemaining = true
-				}
 				if !hasRemaining {
+					remaining, hasRemaining = numberAt(item, "remaining_quota")
+				}
+				if !hasRemaining || !hasPercentage || percentage < 0 || percentage > 100 {
 					continue
 				}
 				window := "GLM 配额"
 				if unit, ok := numberAt(item, "unit"); ok {
 					switch int(unit) {
 					case 3:
-						window = "5 小时额度"
+						window = "5 小时窗口"
 					case 6:
-						window = "每周额度"
+						window = "周配额"
+					case 5:
+						window = "工具（月度）"
 					case 4:
 						window = "每日额度"
 					}
 				}
-				fraction := remaining / 100
-				if !hasPercentage && hasLimit && limit > 0 && hasUsed {
-					fraction = (limit - used) / limit
+				fraction := 0.0
+				if hasPercentage {
+					fraction = 1 - percentage/100
 				}
-				fraction = math.Max(0, math.Min(1, fraction))
-				description := window + " 剩余 " + formatNumber(remaining) + "%"
-				if hasUsed && hasLimit {
-					description += "（已用 " + formatNumber(used) + " / " + formatNumber(limit) + " 积分）"
+				reset, _ := stringAt(item, "nextResetTime")
+				description := window + " 剩余 " + formatNumber(remaining) + " 积分"
+				if hasPercentage {
+					description += "（已用 " + formatNumber(percentage) + "%）"
 				}
-				buckets = append(buckets, quotaBucket{Window: window, RemainingFraction: fraction, Description: description})
+				buckets = append(buckets, quotaBucket{Window: window, RemainingFraction: fraction, ResetTime: reset, Description: description})
 			}
 			if len(buckets) > 0 {
 				return quotaFetchResponse{Groups: []quotaGroup{{DisplayName: "GLM 配额", Buckets: buckets}}}, nil

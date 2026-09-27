@@ -284,8 +284,8 @@ func TestNormalizeNewAPIQuota(t *testing.T) {
 
 func TestNormalizeGLMQuotaLimits(t *testing.T) {
 	document := map[string]any{"data": map[string]any{"limits": []any{
-		map[string]any{"type": "CREDIT_LIMIT", "percentage": 25.0, "currentValue": 750.0, "usage": 1000.0, "unit": 3.0},
-		map[string]any{"type": "TIME_LIMIT", "percentage": 10.0, "currentValue": 90.0, "usage": 100.0, "unit": 6.0},
+		map[string]any{"type": "CREDIT_LIMIT", "percentage": 25.0, "remaining": 750.0, "unit": 3.0},
+		map[string]any{"type": "TIME_LIMIT", "percentage": 10.0, "remaining": 90.0, "unit": 6.0},
 	}}}
 	resp, err := normalizeQuota(document, nil, false, config{WindowName: "GLM 配额"})
 	if err != nil {
@@ -296,6 +296,9 @@ func TestNormalizeGLMQuotaLimits(t *testing.T) {
 	}
 	if resp.Groups[0].Buckets[0].RemainingFraction != 0.75 || resp.Groups[0].Buckets[1].RemainingFraction != 0.9 {
 		t.Fatalf("GLM remaining fractions = %#v", resp.Groups[0].Buckets)
+	}
+	if !strings.Contains(resp.Groups[0].Buckets[0].Description, "剩余 750 积分") || !strings.Contains(resp.Groups[0].Buckets[0].Description, "已用 25%") {
+		t.Fatalf("GLM description = %#v", resp.Groups[0].Buckets[0])
 	}
 }
 
@@ -838,7 +841,7 @@ func fakeHost(t *testing.T, status int, body string, seen *httpRequest) {
 
 func TestGLMOldProfileEndpoint(t *testing.T) {
 	var seen httpRequest
-	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":20,"unit":3}]}}`, &seen)
+	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":20,"remaining":800,"unit":3}]}}`, &seen)
 	storage, _ := json.Marshal(map[string]string{"api_key": "test-key"})
 	profile := config{Vendor: "custom", Endpoint: "https://open.bigmodel.cn/api/paas/v4", CredentialHeader: "Authorization", CredentialPrefix: "Bearer ", CredentialPaths: []string{"api_key"}, Method: "GET"}
 	response, err := fetchQuotaWithProfile(profile, quotaFetchRequest{Provider: "openai-compatible-glm", StorageJSON: storage, Attributes: map[string]string{"base_url": "https://open.bigmodel.cn/api/paas/v4"}})
@@ -866,7 +869,7 @@ func TestGLMCompatibleQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen httpRequest
-	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":25,"unit":3},{"type":"CREDIT_LIMIT","percentage":10,"unit":6}]}}`, &seen)
+	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":25,"remaining":750,"unit":3},{"type":"CREDIT_LIMIT","percentage":10,"remaining":900,"unit":6}]}}`, &seen)
 	storage, _ := json.Marshal(map[string]string{"api_key": "test-key", "base_url": "https://open.bigmodel.cn/api/paas/v4"})
 	response, err := fetchQuota(quotaFetchRequest{Provider: "openai-compatible-glm", StorageJSON: storage, Attributes: map[string]string{"base_url": "https://open.bigmodel.cn/api/paas/v4"}})
 	if err != nil {
@@ -882,7 +885,10 @@ func TestGLMCompatibleQuota(t *testing.T) {
 
 func TestGLMQuotaErrors(t *testing.T) {
 	cfg := config{Vendor: "glm", Endpoint: "https://open.bigmodel.cn/api/monitor/usage/quota/limit"}
-	for _, tc := range []struct{ body any; want string }{
+	for _, tc := range []struct {
+		body any
+		want string
+	}{
 		{map[string]any{"success": false, "msg": "无权查看套餐"}, "无权查看套餐"},
 		{map[string]any{"success": true, "data": map[string]any{"limits": []any{}}}, "普通 /api/paas/v4 API Key"},
 	} {
