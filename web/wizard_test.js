@@ -30,14 +30,16 @@ function loadWizard(options = {}) {
 
 test('snapshot is one first/last record per account, day, and currency', () => {
   const {context, values} = loadWizard();
-  context.recordSnapshot('deepseek@a', {ok:true, balance:10, used:100, currency:'USD'});
-  context.recordSnapshot('deepseek@a', {ok:true, balance:8, used:125, currency:'USD'});
+  context.recordSnapshot('deepseek@a', {ok:true, balance:10, used:100, limit:100, has_limit:true, currency:'USD'});
+  context.recordSnapshot('deepseek@a', {ok:true, balance:8, used:125, limit:90, has_limit:true, currency:'USD'});
   context.recordSnapshot('deepseek@a', {ok:true, balance:8, used:125, currency:'CNY'});
   const records = JSON.parse(values.get('api-balance-daily-v2'));
   assert.equal(records.length, 2);
   const usd = records.find(x => x.currency === 'USD');
   assert.equal(usd.firstBalance, 10);
   assert.equal(usd.lastBalance, 8);
+  assert.equal(usd.firstLimit, 100);
+  assert.equal(usd.lastLimit, 90);
   assert.equal(context.snapshotUsedDelta(usd), 25);
   assert.equal(context.snapshotUsedDelta({...usd, lastUsed: 2}), null);
 });

@@ -338,8 +338,8 @@ function recordSnapshot(key, result){
     var currency=resultCurrency(result), idx=-1;
     items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&String(x.currency||"").toUpperCase()===currency)idx=i;});
     var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
-    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,limit:knownNumber(result.limit)?Number(result.limit):null});
-    else{var x=items[idx];x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(knownNumber(result.limit)){x.limit=Number(result.limit);x.hasLimit=!!result.has_limit;}}
+    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,firstLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,lastLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,limit:knownNumber(result.limit)?Number(result.limit):null});
+    else{var x=items[idx];x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(result.has_limit&&knownNumber(result.limit)){if(!x.hasLimit)x.firstLimit=Number(result.limit);x.hasLimit=true;x.lastLimit=Number(result.limit);x.limit=Number(result.limit);}}
   }
   items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
 }
@@ -359,7 +359,7 @@ function renderDailySnapshots(){
   if(!items.length){box.innerHTML="暂无符合条件的快照。查询成功后会记录每个账号每天的首末快照。";return;}
   var groups={}; items.forEach(function(x){
     var kind=x.kind||"balance", window=kind==="quota"?(x.window||"GLM 配额"):"余额", k=x.day+"\0"+kind+"\0"+String(x.currency||"").toUpperCase()+"\0"+window;
-    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:x.currency||"未知",window:window,count:0,balanceChange:0,balanceKnown:true,used:0,usedKnown:true,remainingChange:0,remainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});g.count++;
+    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:x.currency||"未知",window:window,count:0,balanceChange:0,balanceKnown:true,limitChange:0,limitKnown:true,used:0,usedKnown:true,remainingChange:0,remainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});g.count++;
     if(kind==="quota"){
       var d=snapshotRemainingDelta(x);if(d===null)g.remainingKnown=false;else g.remainingChange+=d;
       if(knownNumber(x.firstRemaining))g.firstRemaining+=Number(x.firstRemaining);else g.firstRemainingKnown=false;
@@ -367,6 +367,7 @@ function renderDailySnapshots(){
       g.lastResetTime=x.lastResetTime||g.lastResetTime;
     }else{
       if(knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else g.balanceKnown=false;
+      if(knownNumber(x.firstLimit)&&knownNumber(x.lastLimit))g.limitChange+=Number(x.lastLimit)-Number(x.firstLimit);else g.limitKnown=false;
       var usedDelta=snapshotUsedDelta(x);if(usedDelta===null)g.usedKnown=false;else g.used+=usedDelta;
     }
   });
@@ -376,7 +377,8 @@ function renderDailySnapshots(){
       var change=g.remainingKnown?formatAmount(g.remainingChange,"积分"):"—", range=g.firstRemainingKnown&&g.remainingKnown?formatAmount(g.firstRemaining,"积分")+" → "+formatAmount(g.lastRemaining,"积分"):"—";
       html+="<tr><td>"+esc(g.day)+"</td><td>GLM 配额</td><td>"+esc(g.window)+"<div class='tip'>"+esc(range)+"</div></td><td>"+g.count+"</td><td>"+change+"</td><td>"+(g.lastResetTime?"重置 "+esc(g.lastResetTime):"—")+"</td></tr>";
     }else{
-      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"—")+"</td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";
+      var balanceText=g.balanceKnown?formatAmount(g.balanceChange,g.currency):"余额 —", limitText=g.limitKnown?formatAmount(g.limitChange,g.currency):"限额 —";
+      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+balanceText+"<div class='tip'>"+limitText+"</div></td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";
     }
   });
   box.innerHTML=html+"</tbody></table><div class='tip'>现金余额和 GLM 配额分开统计；GLM 配额记录每个窗口的首末剩余积分与重置时间。</div>";
