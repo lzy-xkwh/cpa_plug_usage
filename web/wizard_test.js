@@ -161,6 +161,22 @@ test('in-flight requests are deduplicated and failures are cached', async () => 
   assert.equal(context.balanceCache['deepseek@a'].message, 'mock failure');
 });
 
+test('account configuration does not auto-refresh and only refreshes manually', async () => {
+  let calls = 0;
+  const {context, element} = loadWizard({fetch: async url => {
+    calls++;
+    assert.match(url, /config-data/);
+    return {ok:true, json:async () => ({providers:[], credentials:[], config:{}})};
+  }});
+  context.showView('accounts', element('accountsTab'));
+  assert.equal(calls, 0);
+  const button = element('refreshBtn');
+  button.textContent = '手动刷新账号配置';
+  await context.refreshAccountConfig(button);
+  assert.equal(calls, 1);
+  assert.equal(button.disabled, false);
+});
+
 test('home view shows selected balances and hides account configuration', () => {
   const {context, element} = loadWizard();
   context.selected = {a:true};
