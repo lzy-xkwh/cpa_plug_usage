@@ -281,7 +281,10 @@ function nowISO(){ return new Date().toISOString(); }
 function localDay(date){ var d=date||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function accountText(c){ return [c.provider,c.label,c.name,c.base_url].join(" ").toLowerCase(); }
 function resultCurrency(r){ return String((r && r.currency) || "").trim().toUpperCase(); }
-function displayCurrency(value){ return String(value || "").trim().toUpperCase() || "未知币种"; }
+function displayCurrency(value){
+  var currency=String(value || "").trim().toUpperCase();
+  return !currency || currency === "未知币种" || currency === "UNKNOWN" ? "CNY" : currency;
+}
 function knownNumber(v){ return v !== undefined && v !== null && v !== "" && isFinite(Number(v)); }
 function selectedCredentialRows(){
   var q = ((document.getElementById("summaryAccount") || {}).value || "").trim().toLowerCase();
@@ -337,7 +340,7 @@ function recordSnapshot(key, result){
       else{var x=items[idx];x.sampleCount=(x.sampleCount||1)+1;x.lastAt=at;x.lastRemaining=remaining;x.lastFraction=fraction;x.lastResetTime=q.reset_time||x.lastResetTime||"";}
     });
   }else if(result.has_balance !== false){
-    var currency=displayCurrency(resultCurrency(result)), idx=-1;
+    var currency=displayCurrency(resultCurrency(result) || result.currency), idx=-1;
     items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&displayCurrency(x.currency)===currency)idx=i;});
     var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
     if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,sampleCount:1,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,firstLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,lastLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,limit:knownNumber(result.limit)?Number(result.limit):null});

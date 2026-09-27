@@ -1440,6 +1440,9 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 		fraction = 1
 	}
 	currency, _ := stringAt(document, cfg.CurrencyPath)
+	if strings.TrimSpace(currency) == "" {
+		currency = "CNY"
+	}
 	plan, _ := stringAt(document, cfg.PlanPath)
 	reset, _ := stringAt(document, cfg.ResetPath)
 	description := "balance=" + formatNumber(balance)
@@ -2464,7 +2467,10 @@ func fetchProviderBalance(provider string, credentialKeys ...string) providerBal
 			result.Used = bucket.Used
 			result.HasLimit = bucket.HasLimit
 			result.HasUsed = bucket.HasUsed
-			result.Currency = bucket.Currency
+			result.Currency = strings.TrimSpace(bucket.Currency)
+			if result.Currency == "" {
+				result.Currency = "CNY"
+			}
 		}
 		result.Fraction = bucket.RemainingFraction
 	}

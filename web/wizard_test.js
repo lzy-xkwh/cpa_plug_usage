@@ -85,6 +85,20 @@ test('legacy balance snapshots remain separate from quota windows', () => {
   assert.match(element('dailyRows').innerHTML, /GLM 配额/);
   assert.equal(context.snapshotRemainingDelta({...rows[1], lastRemaining:null}), null);
 });
+test('missing currency defaults to CNY across balance rendering and snapshots', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{provider:'relay',profile_key:'relay',label:'Relay'}], config:{}};
+  context.displaySel = {relay:true};
+  context.balanceCache.relay = {ok:true,balance:16.5336,limit:62.4968,used:45.9632,has_limit:true,has_used:true};
+  context.renderSelectedBalances();
+  assert.match(element('selected-bal-relay').innerHTML, /CNY 16\.5336/);
+  assert.match(element('selected-bal-relay').innerHTML, /CNY 62\.4968/);
+  assert.match(element('selected-bal-relay').innerHTML, /CNY 45\.9632/);
+  context.recordSnapshot('relay', {ok:true,balance:16.5336,currency:''});
+  context.renderDailySnapshots();
+  assert.match(element('dailyRows').innerHTML, /CNY/);
+});
+
 test('daily cash snapshot separates current balance from change and labels missing currency', () => {
   const {context, element} = loadWizard();
   context.DATA = {providers:[], credentials:[
@@ -98,8 +112,8 @@ test('daily cash snapshot separates current balance from change and labels missi
   const html = element('dailyRows').innerHTML;
   assert.match(html, /当前余额/);
   assert.match(html, /USD 10/);
-  assert.match(html, /未知币种/);
-  assert.match(html, /未知币种 8\.1968/);
+  assert.match(html, /CNY/);
+  assert.match(html, /CNY 8\.1968/);
   assert.match(html, /仅一次采样，无法计算 used 增量/);
   assert.match(html, /查看账号明细/);
 });

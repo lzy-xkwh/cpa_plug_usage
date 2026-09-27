@@ -262,6 +262,27 @@ func TestNormalizeQuota(t *testing.T) {
 	}
 }
 
+func TestNormalizeQuotaDefaultsMissingCurrencyToCNY(t *testing.T) {
+	document := map[string]any{"data": map[string]any{
+		"balance": 16.5336,
+		"limit":   62.4968,
+		"used":    45.9632,
+	}}
+	resp, err := normalizeQuota(document, document, false, config{
+		BalancePath: "data.balance",
+		LimitPath: "data.limit",
+		UsedPath: "data.used",
+		WindowName: "balance",
+	})
+	if err != nil {
+		t.Fatalf("normalizeQuota() error = %v", err)
+	}
+	bucket := resp.Groups[0].Buckets[0]
+	if bucket.Currency != "CNY" {
+		t.Fatalf("currency = %q, want CNY", bucket.Currency)
+	}
+}
+
 func TestNormalizeNewAPIQuota(t *testing.T) {
 	document := map[string]any{"data": map[string]any{
 		"total_available": 500000.0,
