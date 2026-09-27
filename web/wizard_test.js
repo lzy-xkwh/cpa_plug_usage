@@ -42,6 +42,47 @@ test('snapshot is one first/last record per account, day, and currency', () => {
   assert.equal(context.snapshotUsedDelta({...usd, lastUsed: 2}), null);
 });
 
+test('GLM quota snapshots retain first and last values per window', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{provider:'openai-compatible-glm',profile_key:'glm-a',label:'GLM A'}], config:{}};
+  const quota = (fiveHour, weekly) => ({ok:true,has_balance:false,quota_windows:[
+    {window:'5 小时窗口',remaining:fiveHour,remaining_fraction:fiveHour/100,reset_time:'2026-09-28T00:00:00Z'},
+    {window:'周配额',remaining:weekly,remaining_fraction:weekly/1000}
+  ]});
+  context.recordSnapshot('glm-a', quota(50, 700));
+  context.recordSnapshot('glm-a', quota(40, 650));
+  const records = context.snapshotItems();
+  assert.equal(records.length, 2);
+  const five = records.find(x => x.window === '5 小时窗口');
+  assert.equal(five.kind, 'quota');
+  assert.equal(five.firstRemaining, 50);
+  assert.equal(five.lastRemaining, 40);
+  assert.equal(context.snapshotRemainingDelta(five), -10);
+  assert.equal(five.lastResetTime, '2026-09-28T00:00:00Z');
+  context.renderDailySnapshots();
+  assert.match(element('dailyRows').innerHTML, /GLM 配额/);
+  assert.match(element('dailyRows').innerHTML, /5 小时窗口/);
+  assert.match(element('dailyRows').innerHTML, /周配额/);
+  assert.doesNotMatch(element('dailyRows').innerHTML, /余额 0/);
+});
+
+test('legacy balance snapshots remain separate from quota windows', () => {
+  const {context, values, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{provider:'openai-compatible-glm',profile_key:'a',label:'A'}], config:{}};
+  context.recordSnapshot('a', {ok:true,balance:12,currency:'CNY',used:1});
+  const legacy = JSON.parse(values.get('api-balance-daily-v2'));
+  delete legacy[0].kind;
+  values.set('api-balance-daily-v2', JSON.stringify(legacy));
+  context.recordSnapshot('a', {ok:true,has_balance:false,quota_windows:[{window:'5 小时窗口',remaining:200,remaining_fraction:0.5}]});
+  const rows = context.snapshotItems();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].firstBalance, 12);
+  assert.equal(rows[1].firstRemaining, 200);
+  context.renderDailySnapshots();
+  assert.match(element('dailyRows').innerHTML, /现金余额/);
+  assert.match(element('dailyRows').innerHTML, /GLM 配额/);
+  assert.equal(context.snapshotRemainingDelta({...rows[1], lastRemaining:null}), null);
+});
 test('storage failures do not throw or break query state', () => {
   const {context} = loadWizard({throwStorage:true});
   assert.doesNotThrow(() => context.recordSnapshot('x', {ok:true, balance:1, currency:'USD'}));

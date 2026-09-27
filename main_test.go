@@ -300,6 +300,9 @@ func TestNormalizeGLMQuotaLimits(t *testing.T) {
 	if !strings.Contains(resp.Groups[0].Buckets[0].Description, "剩余 750 积分") || !strings.Contains(resp.Groups[0].Buckets[0].Description, "已用 25%") {
 		t.Fatalf("GLM description = %#v", resp.Groups[0].Buckets[0])
 	}
+	if resp.Groups[0].Buckets[0].Balance != 750 || resp.Groups[0].Buckets[0].Window != "5 小时窗口" {
+		t.Fatalf("GLM snapshot fields = %#v", resp.Groups[0].Buckets[0])
+	}
 }
 
 func TestFindCredentialDoesNotReturnMalformedJSON(t *testing.T) {

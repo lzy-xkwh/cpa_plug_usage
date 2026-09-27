@@ -61,7 +61,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
 <div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；余额查询失败不会把未知值当作 0。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
 <div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>已用增量合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
-<div id="view-daily" style="display:none" class="card"><h2>每日用量快照</h2><div class="filterbar"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种</option></select></div><div id="dailyRows" class="tip">查询成功后，这里会记录本浏览器每个账号每天的首末快照。上游未提供历史 API 时，不会伪造历史用量。</div><button class="btn" onclick="clearDailySnapshots()">清除本机快照</button></div>
+<div id="view-daily" style="display:none" class="card"><h2>每日余额 / 配额快照</h2><div class="filterbar"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="dailyRows" class="tip">查询成功后，这里会记录本浏览器每个账号每天的首末余额或配额快照。上游未提供历史 API 时，不会伪造历史用量。</div><button class="btn" onclick="clearDailySnapshots()">清除本机快照</button></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -324,17 +324,32 @@ function snapshotKey(){ return "api-balance-daily-v2"; }
 function snapshotItems(){ var x=storageGet(snapshotKey(),[]); return Array.isArray(x)?x:[]; }
 function recordSnapshot(key, result){
   if (!result || !result.ok) return;
-  var currency=resultCurrency(result), day=localDay(), at=nowISO(), items=snapshotItems();
-  var idx=-1;
-  items.forEach(function(x,i){if(x.key===key && x.day===day && String(x.currency||"").toUpperCase()===currency)idx=i;});
-  var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
-  if(idx<0) items.push({key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,limit:knownNumber(result.limit)?Number(result.limit):null});
-  else {var x=items[idx]; x.lastAt=at; x.lastBalance=balance; x.lastUsed=used; if(knownNumber(result.limit)){x.limit=Number(result.limit);x.hasLimit=!!result.has_limit;}}
+  var day=localDay(), at=nowISO(), items=snapshotItems();
+  if(Array.isArray(result.quota_windows)&&result.quota_windows.length){
+    result.quota_windows.forEach(function(q){
+      if(!q||!q.window||!knownNumber(q.remaining))return;
+      var idx=-1;
+      items.forEach(function(x,i){if((x.kind||"balance")==="quota"&&x.key===key&&x.day===day&&x.window===q.window)idx=i;});
+      var remaining=Number(q.remaining), fraction=knownNumber(q.remaining_fraction)?Number(q.remaining_fraction):null;
+      if(idx<0)items.push({kind:"quota",key:key,day:day,currency:"积分",window:q.window,firstAt:at,lastAt:at,firstRemaining:remaining,lastRemaining:remaining,firstFraction:fraction,lastFraction:fraction,firstResetTime:q.reset_time||"",lastResetTime:q.reset_time||""});
+      else{var x=items[idx];x.lastAt=at;x.lastRemaining=remaining;x.lastFraction=fraction;x.lastResetTime=q.reset_time||x.lastResetTime||"";}
+    });
+  }else{
+    var currency=resultCurrency(result), idx=-1;
+    items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&String(x.currency||"").toUpperCase()===currency)idx=i;});
+    var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
+    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,limit:knownNumber(result.limit)?Number(result.limit):null});
+    else{var x=items[idx];x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(knownNumber(result.limit)){x.limit=Number(result.limit);x.hasLimit=!!result.has_limit;}}
+  }
   items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
 }
 function snapshotUsedDelta(x){
   if(!knownNumber(x.firstUsed)||!knownNumber(x.lastUsed)||Number(x.lastUsed)<Number(x.firstUsed)) return null;
   return Number(x.lastUsed)-Number(x.firstUsed);
+}
+function snapshotRemainingDelta(x){
+  if(!knownNumber(x.firstRemaining)||!knownNumber(x.lastRemaining))return null;
+  return Number(x.lastRemaining)-Number(x.firstRemaining);
 }
 function renderDailySnapshots(){
   var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
@@ -342,13 +357,29 @@ function renderDailySnapshots(){
   items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||String(x.currency||"").toUpperCase()===cur);});
   var currencies=[]; snapshotItems().forEach(function(x){var c=String(x.currency||"").toUpperCase();if(c&&currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
   if(!items.length){box.innerHTML="暂无符合条件的快照。查询成功后会记录每个账号每天的首末快照。";return;}
-  var groups={}; items.forEach(function(x){var k=x.day+"\0"+String(x.currency||"").toUpperCase(),g=groups[k]||(groups[k]={day:x.day,currency:x.currency||"未知币种",count:0,balanceChange:0,balanceKnown:true,used:0,usedKnown:true});g.count++;
-    if(knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else g.balanceKnown=false;
-    var d=snapshotUsedDelta(x);if(d===null)g.usedKnown=false;else g.used+=d;
+  var groups={}; items.forEach(function(x){
+    var kind=x.kind||"balance", window=kind==="quota"?(x.window||"GLM 配额"):"余额", k=x.day+"\0"+kind+"\0"+String(x.currency||"").toUpperCase()+"\0"+window;
+    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:x.currency||"未知",window:window,count:0,balanceChange:0,balanceKnown:true,used:0,usedKnown:true,remainingChange:0,remainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});g.count++;
+    if(kind==="quota"){
+      var d=snapshotRemainingDelta(x);if(d===null)g.remainingKnown=false;else g.remainingChange+=d;
+      if(knownNumber(x.firstRemaining))g.firstRemaining+=Number(x.firstRemaining);else g.firstRemainingKnown=false;
+      if(knownNumber(x.lastRemaining))g.lastRemaining+=Number(x.lastRemaining);else g.remainingKnown=false;
+      g.lastResetTime=x.lastResetTime||g.lastResetTime;
+    }else{
+      if(knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else g.balanceKnown=false;
+      var usedDelta=snapshotUsedDelta(x);if(usedDelta===null)g.usedKnown=false;else g.used+=usedDelta;
+    }
   });
-  var html="<table><thead><tr><th>日期</th><th>币种</th><th>账号数</th><th>余额变化</th><th>每日 used 增量</th></tr></thead><tbody>";
-  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k];html+="<tr><td>"+esc(g.day)+"</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"—")+"</td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";});
-  box.innerHTML=html+"</tbody></table><div class='tip'>余额变化独立于 used；每日用量只显示同一账号当日末值减首值，检测到重置时标为未知。</div>";
+  var html="<table><thead><tr><th>日期</th><th>类型</th><th>窗口 / 币种</th><th>账号数</th><th>首末变化</th><th>每日用量 / 重置</th></tr></thead><tbody>";
+  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k];
+    if(g.kind==="quota"){
+      var change=g.remainingKnown?formatAmount(g.remainingChange,"积分"):"—", range=g.firstRemainingKnown&&g.remainingKnown?formatAmount(g.firstRemaining,"积分")+" → "+formatAmount(g.lastRemaining,"积分"):"—";
+      html+="<tr><td>"+esc(g.day)+"</td><td>GLM 配额</td><td>"+esc(g.window)+"<div class='tip'>"+esc(range)+"</div></td><td>"+g.count+"</td><td>"+change+"</td><td>"+(g.lastResetTime?"重置 "+esc(g.lastResetTime):"—")+"</td></tr>";
+    }else{
+      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"—")+"</td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";
+    }
+  });
+  box.innerHTML=html+"</tbody></table><div class='tip'>现金余额和 GLM 配额分开统计；GLM 配额记录每个窗口的首末剩余积分与重置时间。</div>";
 }
 function clearDailySnapshots(){ storageRemove(snapshotKey()); renderDailySnapshots(); }
 

@@ -1391,7 +1391,7 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 				if hasPercentage {
 					description += "（已用 " + formatNumber(percentage) + "%）"
 				}
-				buckets = append(buckets, quotaBucket{Window: window, RemainingFraction: fraction, ResetTime: reset, Description: description})
+				buckets = append(buckets, quotaBucket{Window: window, RemainingFraction: fraction, ResetTime: reset, Description: description, Balance: remaining})
 			}
 			if len(buckets) > 0 {
 				return quotaFetchResponse{Groups: []quotaGroup{{DisplayName: "GLM 配额", Buckets: buckets}}}, nil
@@ -2396,18 +2396,26 @@ func credentialForProvider(provider string, credentialKey ...string) (providerCr
 }
 
 // providerBalanceResult 返回给向导页的单个供应商余额（不含任何密钥）。
+type providerQuotaWindow struct {
+	Window            string  `json:"window,omitempty"`
+	Remaining         float64 `json:"remaining"`
+	RemainingFraction float64 `json:"remaining_fraction"`
+	ResetTime         string  `json:"reset_time,omitempty"`
+}
+
 type providerBalanceResult struct {
-	OK          bool    `json:"ok"`
-	HasBalance  bool    `json:"has_balance"`
-	Description string  `json:"description,omitempty"`
-	Fraction    float64 `json:"fraction,omitempty"`
-	Balance     float64 `json:"balance"`
-	Limit       float64 `json:"limit,omitempty"`
-	Used        float64 `json:"used,omitempty"`
-	HasLimit    bool    `json:"has_limit,omitempty"`
-	HasUsed     bool    `json:"has_used,omitempty"`
-	Currency    string  `json:"currency,omitempty"`
-	Message     string  `json:"message,omitempty"`
+	OK           bool                  `json:"ok"`
+	HasBalance   bool                  `json:"has_balance"`
+	Description  string                `json:"description,omitempty"`
+	Fraction     float64               `json:"fraction,omitempty"`
+	Balance      float64               `json:"balance"`
+	Limit        float64               `json:"limit,omitempty"`
+	Used         float64               `json:"used,omitempty"`
+	HasLimit     bool                  `json:"has_limit,omitempty"`
+	HasUsed      bool                  `json:"has_used,omitempty"`
+	Currency     string                `json:"currency,omitempty"`
+	QuotaWindows []providerQuotaWindow `json:"quota_windows,omitempty"`
+	Message      string                `json:"message,omitempty"`
 }
 
 // fetchProviderBalance 在服务端为指定供应商执行一次余额查询，
@@ -2443,8 +2451,10 @@ func fetchProviderBalance(provider string, credentialKeys ...string) providerBal
 		if group.DisplayName == "GLM 配额" {
 			result.HasBalance = false
 			descriptions := make([]string, 0, len(group.Buckets))
+			result.QuotaWindows = make([]providerQuotaWindow, 0, len(group.Buckets))
 			for _, window := range group.Buckets {
 				descriptions = append(descriptions, window.Description)
+				result.QuotaWindows = append(result.QuotaWindows, providerQuotaWindow{Window: window.Window, Remaining: window.Balance, RemainingFraction: window.RemainingFraction, ResetTime: window.ResetTime})
 			}
 			result.Description = strings.Join(descriptions, " · ")
 		} else {
