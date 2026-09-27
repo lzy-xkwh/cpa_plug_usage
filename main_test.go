@@ -146,8 +146,7 @@ func TestCommonRelayPresets(t *testing.T) {
 		}
 	}
 }
-
-
+func TestOneApiPresetAndDerivedBalance(t *testing.T) {
 	if err := applyConfig([]byte("vendor: one-api\nbase_url: https://relay.example.com\n")); err != nil {
 		t.Fatalf("applyConfig() error for one-api preset = %v", err)
 	}
