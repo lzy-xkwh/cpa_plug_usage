@@ -643,6 +643,9 @@ func normalizeDefaults(next *config) error {
 	if next.CredentialPrefix == "" {
 		next.CredentialPrefix = "Bearer "
 	}
+	if next.Vendor == "glm" || next.Vendor == "zai" {
+		next.CredentialPrefix = ""
+	}
 	if len(next.CredentialPaths) == 0 {
 		next.CredentialPaths = []string{"access_token", "accessToken", "api_key", "apiKey", "token", "key"}
 	}
@@ -1381,7 +1384,7 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 					}
 				}
 				fraction := remaining / 100
-				if hasLimit && limit > 0 && hasUsed {
+				if !hasPercentage && hasLimit && limit > 0 && hasUsed {
 					fraction = (limit - used) / limit
 				}
 				fraction = math.Max(0, math.Min(1, fraction))
@@ -1406,13 +1409,13 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 		used, hasUsed = numberAt(document, cfg.UsedPath)
 	}
 	limit, hasLimit := numberAt(document, cfg.LimitPath)
-	if hasUsed && cfg.UsedScale != 1 {
+	if hasUsed && cfg.UsedScale != 0 && cfg.UsedScale != 1 {
 		used *= cfg.UsedScale
 	}
-	if hasBalance && cfg.BalanceScale != 1 {
+	if hasBalance && cfg.BalanceScale != 0 && cfg.BalanceScale != 1 {
 		balance *= cfg.BalanceScale
 	}
-	if hasLimit && cfg.LimitScale != 1 {
+	if hasLimit && cfg.LimitScale != 0 && cfg.LimitScale != 1 {
 		limit *= cfg.LimitScale
 	}
 	if !hasBalance && hasLimit && hasUsed {
