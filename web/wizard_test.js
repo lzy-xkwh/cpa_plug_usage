@@ -85,6 +85,25 @@ test('legacy balance snapshots remain separate from quota windows', () => {
   assert.match(element('dailyRows').innerHTML, /GLM 配额/);
   assert.equal(context.snapshotRemainingDelta({...rows[1], lastRemaining:null}), null);
 });
+test('daily cash snapshot separates current balance from change and labels missing currency', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[
+    {provider:'deepseek',profile_key:'usd',label:'USD account',base_url:'https://usd.test'},
+    {provider:'relay',profile_key:'unknown',label:'Relay account',base_url:'https://relay.test'}
+  ], config:{}};
+  context.recordSnapshot('usd', {ok:true,balance:10.1,used:100,currency:'USD'});
+  context.recordSnapshot('usd', {ok:true,balance:10,used:100.1,currency:'USD'});
+  context.recordSnapshot('unknown', {ok:true,balance:8.1968,used:2});
+  context.renderDailySnapshots();
+  const html = element('dailyRows').innerHTML;
+  assert.match(html, /当前余额/);
+  assert.match(html, /USD 10/);
+  assert.match(html, /未知币种/);
+  assert.match(html, /未知币种 8\.1968/);
+  assert.match(html, /仅一次采样，无法计算 used 增量/);
+  assert.match(html, /查看账号明细/);
+});
+
 test('storage failures do not throw or break query state', () => {
   const {context} = loadWizard({throwStorage:true});
   assert.doesNotThrow(() => context.recordSnapshot('x', {ok:true, balance:1, currency:'USD'}));

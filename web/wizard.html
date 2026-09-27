@@ -34,6 +34,7 @@ th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
 .tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
 .tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
 .balance-detail{white-space:normal;overflow-wrap:anywhere;line-height:1.6}td{overflow-wrap:anywhere}
+.daily-detail{min-width:175px}.daily-detail summary{white-space:nowrap}.daily-detail .tip{margin-top:4px}
 .quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
 .configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}.configbox.focus-config{border-color:var(--ac);box-shadow:0 0 0 2px var(--soft)}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
@@ -280,6 +281,7 @@ function nowISO(){ return new Date().toISOString(); }
 function localDay(date){ var d=date||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function accountText(c){ return [c.provider,c.label,c.name,c.base_url].join(" ").toLowerCase(); }
 function resultCurrency(r){ return String((r && r.currency) || "").trim().toUpperCase(); }
+function displayCurrency(value){ return String(value || "").trim().toUpperCase() || "未知币种"; }
 function knownNumber(v){ return v !== undefined && v !== null && v !== "" && isFinite(Number(v)); }
 function selectedCredentialRows(){
   var q = ((document.getElementById("summaryAccount") || {}).value || "").trim().toLowerCase();
@@ -288,7 +290,7 @@ function selectedCredentialRows(){
     if (!displaySel[c.key]) return false;
     if (q && accountText(c).indexOf(q) < 0) return false;
     var r = balanceCache[c.key];
-    return !cur || (r && r.ok && resultCurrency(r) === cur);
+    return !cur || (r && r.ok && displayCurrency(resultCurrency(r)) === cur);
   });
 }
 function renderCurrencyOptions(id, values){
@@ -302,13 +304,13 @@ function renderSummary(){
   rows.forEach(function(c){ if (displaySel[c.key] && c.status === "ok") ready++; });
   chosen.forEach(function(c){
     var r=balanceCache[c.key]; if(!r || !r.ok) return;
-    var cur=resultCurrency(r) || "未知币种";
+    var cur=displayCurrency(resultCurrency(r));
     if(!byCurrency[cur]) byCurrency[cur]={balance:0,balanceKnown:true,used:0,usedKnown:true,count:0};
     var g=byCurrency[cur]; g.count++;
     if(r.has_balance !== false && knownNumber(r.balance)) g.balance += Number(r.balance); else g.balanceKnown=false;
     if(r.has_used && knownNumber(r.used)) g.used += Number(r.used); else g.usedKnown=false;
   });
-  currencies=Object.keys(byCurrency).filter(function(c){return c!=="未知币种";}); renderCurrencyOptions("summaryCurrency",currencies);
+  currencies=Object.keys(byCurrency); renderCurrencyOptions("summaryCurrency",currencies);
   var selectedCurrency=((document.getElementById("summaryCurrency")||{}).value||"").trim().toUpperCase();
   var keys=Object.keys(byCurrency).filter(function(c){return !selectedCurrency || c===selectedCurrency;});
   var b=keys.length===1 && byCurrency[keys[0]].balanceKnown ? formatAmount(byCurrency[keys[0]].balance,keys[0]) : "—";
@@ -331,57 +333,71 @@ function recordSnapshot(key, result){
       var idx=-1;
       items.forEach(function(x,i){if((x.kind||"balance")==="quota"&&x.key===key&&x.day===day&&x.window===q.window)idx=i;});
       var remaining=Number(q.remaining), fraction=knownNumber(q.remaining_fraction)?Number(q.remaining_fraction):null;
-      if(idx<0)items.push({kind:"quota",key:key,day:day,currency:"积分",window:q.window,firstAt:at,lastAt:at,firstRemaining:remaining,lastRemaining:remaining,firstFraction:fraction,lastFraction:fraction,firstResetTime:q.reset_time||"",lastResetTime:q.reset_time||""});
-      else{var x=items[idx];x.lastAt=at;x.lastRemaining=remaining;x.lastFraction=fraction;x.lastResetTime=q.reset_time||x.lastResetTime||"";}
+      if(idx<0)items.push({kind:"quota",key:key,day:day,currency:"积分",window:q.window,firstAt:at,lastAt:at,firstRemaining:remaining,lastRemaining:remaining,firstFraction:fraction,lastFraction:fraction,firstResetTime:q.reset_time||"",lastResetTime:q.reset_time||"",sampleCount:1});
+      else{var x=items[idx];x.sampleCount=(x.sampleCount||1)+1;x.lastAt=at;x.lastRemaining=remaining;x.lastFraction=fraction;x.lastResetTime=q.reset_time||x.lastResetTime||"";}
     });
-  }else{
-    var currency=resultCurrency(result), idx=-1;
-    items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&String(x.currency||"").toUpperCase()===currency)idx=i;});
+  }else if(result.has_balance !== false){
+    var currency=displayCurrency(resultCurrency(result)), idx=-1;
+    items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&displayCurrency(x.currency)===currency)idx=i;});
     var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
-    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,firstLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,lastLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,limit:knownNumber(result.limit)?Number(result.limit):null});
-    else{var x=items[idx];x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(result.has_limit&&knownNumber(result.limit)){if(!x.hasLimit)x.firstLimit=Number(result.limit);x.hasLimit=true;x.lastLimit=Number(result.limit);x.limit=Number(result.limit);}}
+    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,sampleCount:1,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,firstLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,lastLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,limit:knownNumber(result.limit)?Number(result.limit):null});
+    else{var x=items[idx];x.sampleCount=(x.sampleCount||1)+1;x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(result.has_limit&&knownNumber(result.limit)){if(!x.hasLimit)x.firstLimit=Number(result.limit);x.hasLimit=true;x.lastLimit=Number(result.limit);x.limit=Number(result.limit);}}
   }
   items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
 }
+function snapshotHasComparison(x){ return x.sampleCount ? x.sampleCount > 1 : !!x.firstAt && !!x.lastAt && x.firstAt !== x.lastAt; }
 function snapshotUsedDelta(x){
-  if(!knownNumber(x.firstUsed)||!knownNumber(x.lastUsed)||Number(x.lastUsed)<Number(x.firstUsed)) return null;
+  if(!snapshotHasComparison(x)||!knownNumber(x.firstUsed)||!knownNumber(x.lastUsed)||Number(x.lastUsed)<Number(x.firstUsed)) return null;
   return Number(x.lastUsed)-Number(x.firstUsed);
 }
 function snapshotRemainingDelta(x){
-  if(!knownNumber(x.firstRemaining)||!knownNumber(x.lastRemaining))return null;
+  if(!snapshotHasComparison(x)||!knownNumber(x.firstRemaining)||!knownNumber(x.lastRemaining))return null;
   return Number(x.lastRemaining)-Number(x.firstRemaining);
+}
+function snapshotAccountDetail(x, kind, currency){
+  var c=credentialByKey(x.key), name=c.label||c.name||c.provider||x.key, site=c.base_url||"未提供站点地址";
+  if(kind==="quota"){
+    var current=knownNumber(x.lastRemaining)?formatAmount(x.lastRemaining,"积分"):"—";
+    var delta=snapshotRemainingDelta(x), change=delta===null?(x.firstAt===x.lastAt?"仅一次采样":"变化不可计算"):formatAmount(delta,"积分");
+    return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前剩余 "+esc(current)+" · 日内变化 "+esc(change)+(x.lastResetTime?" · 重置 "+esc(x.lastResetTime):"")+"</div></div>";
+  }
+  var balance=knownNumber(x.lastBalance)?formatAmount(x.lastBalance,currency):"余额未知";
+  var delta=snapshotUsedDelta(x), usedState=delta!==null?"used 增量 "+formatAmount(delta,currency):(x.firstAt===x.lastAt?"仅一次采样，无法计算 used 增量":(knownNumber(x.firstUsed)&&knownNumber(x.lastUsed)?"used 发生重置，无法计算":"上游未提供 used，无法计算"));
+  return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前余额 "+esc(balance)+" · "+esc(usedState)+"</div></div>";
 }
 function renderDailySnapshots(){
   var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
   var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
-  items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||String(x.currency||"").toUpperCase()===cur);});
-  var currencies=[]; snapshotItems().forEach(function(x){var c=String(x.currency||"").toUpperCase();if(c&&currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
+  items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||displayCurrency(x.currency)===cur);});
+  var currencies=[]; snapshotItems().forEach(function(x){var c=displayCurrency(x.currency);if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
   if(!items.length){box.innerHTML="暂无符合条件的快照。查询成功后会记录每个账号每天的首末快照。";return;}
   var groups={}; items.forEach(function(x){
-    var kind=x.kind||"balance", window=kind==="quota"?(x.window||"GLM 配额"):"余额", k=x.day+"\0"+kind+"\0"+String(x.currency||"").toUpperCase()+"\0"+window;
-    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:x.currency||"未知",window:window,count:0,balanceChange:0,balanceKnown:true,limitChange:0,limitKnown:true,used:0,usedKnown:true,remainingChange:0,remainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});g.count++;
+    var kind=x.kind||"balance", window=kind==="quota"?(x.window||"GLM 配额"):"余额", displayCur=displayCurrency(x.currency), k=x.day+"\0"+kind+"\0"+displayCur+"\0"+window;
+    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:displayCur,window:window,count:0,items:[],balanceChange:0,balanceKnown:true,currentBalance:0,currentBalanceKnown:true,limitChange:0,limitKnown:true,used:0,usedKnown:true,usedReset:false,sampleOnly:0,comparisonCount:0,remainingChange:0,remainingKnown:true,currentRemaining:0,currentRemainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});
+    g.count++;g.items.push(x);if(snapshotHasComparison(x))g.comparisonCount++;else g.sampleOnly++;
     if(kind==="quota"){
-      var d=snapshotRemainingDelta(x);if(d===null)g.remainingKnown=false;else g.remainingChange+=d;
+      var d=snapshotRemainingDelta(x);if(d===null&&snapshotHasComparison(x))g.remainingKnown=false;else if(d!==null)g.remainingChange+=d;
       if(knownNumber(x.firstRemaining))g.firstRemaining+=Number(x.firstRemaining);else g.firstRemainingKnown=false;
-      if(knownNumber(x.lastRemaining))g.lastRemaining+=Number(x.lastRemaining);else g.remainingKnown=false;
+      if(knownNumber(x.lastRemaining)){g.lastRemaining+=Number(x.lastRemaining);g.currentRemaining+=Number(x.lastRemaining);}else{g.remainingKnown=false;g.currentRemainingKnown=false;}
       g.lastResetTime=x.lastResetTime||g.lastResetTime;
     }else{
-      if(knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else g.balanceKnown=false;
-      if(knownNumber(x.firstLimit)&&knownNumber(x.lastLimit))g.limitChange+=Number(x.lastLimit)-Number(x.firstLimit);else g.limitKnown=false;
-      var usedDelta=snapshotUsedDelta(x);if(usedDelta===null)g.usedKnown=false;else g.used+=usedDelta;
+      if(knownNumber(x.lastBalance))g.currentBalance+=Number(x.lastBalance);else g.currentBalanceKnown=false;
+      if(snapshotHasComparison(x)&&knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else if(snapshotHasComparison(x))g.balanceKnown=false;
+      if(snapshotHasComparison(x)&&knownNumber(x.firstLimit)&&knownNumber(x.lastLimit))g.limitChange+=Number(x.lastLimit)-Number(x.firstLimit);else if(snapshotHasComparison(x)&&x.hasLimit)g.limitKnown=false;
+      var usedDelta=snapshotUsedDelta(x);if(usedDelta===null&&snapshotHasComparison(x)){g.usedKnown=false;if(knownNumber(x.firstUsed)&&knownNumber(x.lastUsed))g.usedReset=true;}else if(usedDelta!==null)g.used+=usedDelta;
     }
   });
-  var html="<table><thead><tr><th>日期</th><th>类型</th><th>窗口 / 币种</th><th>账号数</th><th>首末变化</th><th>每日用量 / 重置</th></tr></thead><tbody>";
-  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k];
+  var html="<table><thead><tr><th>日期</th><th>类型</th><th>币种 / 窗口</th><th>账号数</th><th>当前余额 / 剩余</th><th>日内变化</th><th>每日 used / 状态</th></tr></thead><tbody>";
+  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k], details="<details class='daily-detail'><summary>查看账号明细</summary>"+g.items.map(function(x){return snapshotAccountDetail(x,g.kind,g.currency);}).join("")+"</details>";
     if(g.kind==="quota"){
-      var change=g.remainingKnown?formatAmount(g.remainingChange,"积分"):"—", range=g.firstRemainingKnown&&g.remainingKnown?formatAmount(g.firstRemaining,"积分")+" → "+formatAmount(g.lastRemaining,"积分"):"—";
-      html+="<tr><td>"+esc(g.day)+"</td><td>GLM 配额</td><td>"+esc(g.window)+"<div class='tip'>"+esc(range)+"</div></td><td>"+g.count+"</td><td>"+change+"</td><td>"+(g.lastResetTime?"重置 "+esc(g.lastResetTime):"—")+"</td></tr>";
+      var current=g.currentRemainingKnown?formatAmount(g.currentRemaining,"积分"):"剩余未知", change=g.comparisonCount===0?"仅一次采样":(g.remainingKnown?formatAmount(g.remainingChange,"积分"):"变化不可计算"), range=g.firstRemainingKnown&&g.remainingKnown?formatAmount(g.firstRemaining,"积分")+" → "+formatAmount(g.lastRemaining,"积分"):"首末快照不完整";
+      html+="<tr><td>"+esc(g.day)+"</td><td>GLM 配额</td><td>"+esc(g.window)+"<div class='tip'>首末："+esc(range)+"</div></td><td>"+g.count+"</td><td>"+current+details+"</td><td>"+change+"</td><td>"+(g.lastResetTime?"重置 "+esc(g.lastResetTime):"未提供重置时间")+"</td></tr>";
     }else{
-      var balanceText=g.balanceKnown?formatAmount(g.balanceChange,g.currency):"余额 —", limitText=g.limitKnown?formatAmount(g.limitChange,g.currency):"限额 —";
-      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+esc(g.currency)+"</td><td>"+g.count+"</td><td>"+balanceText+"<div class='tip'>"+limitText+"</div></td><td>"+(g.usedKnown?formatAmount(g.used,g.currency):"未知（used 重置或缺失）")+"</td></tr>";
+      var currencyLabel=esc(g.currency), current=g.currentBalanceKnown?formatAmount(g.currentBalance,g.currency):"余额未知", balanceChange=g.comparisonCount===0?"仅一次采样":(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"变化不可计算"), limitText=g.comparisonCount===0?"仅一次采样":(g.limitKnown?formatAmount(g.limitChange,g.currency):"限额变化不可计算"), usedText=g.comparisonCount===0?"仅一次采样，无法计算 used 增量":(g.usedKnown?formatAmount(g.used,g.currency):g.usedReset?"used 发生重置，无法计算":"上游未提供 used，无法计算");
+      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+currencyLabel+"</td><td>"+g.count+"</td><td>"+current+details+"</td><td>"+balanceChange+"<div class='tip'>"+limitText+"</div></td><td>"+usedText+"</td></tr>";
     }
   });
-  box.innerHTML=html+"</tbody></table><div class='tip'>现金余额和 GLM 配额分开统计；GLM 配额记录每个窗口的首末剩余积分与重置时间。</div>";
+  box.innerHTML=html+"</tbody></table><div class='tip'>当前余额是当天最后一次成功查询值；日内变化是首末快照之差。单次查询、币种缺失、used 未提供或发生重置都会单独标明，不会按 0 处理。</div>";
 }
 function clearDailySnapshots(){ storageRemove(snapshotKey()); renderDailySnapshots(); }
 
@@ -512,7 +528,7 @@ function renderBalanceResult(key,result){
 function formatAmount(value, currency){
   var n = Number(value); if (!isFinite(n)) return String(value);
   var text = Math.abs(n) >= 1000 ? n.toLocaleString(undefined, {maximumFractionDigits: 4}) : String(Math.round(n * 10000) / 10000);
-  return (currency ? currency + " " : "") + text;
+  return displayCurrency(currency) + " " + text;
 }
 function fetchBalance(key){
   var cached=balanceCache[key]; if(cached)renderBalanceResult(key,cached);
