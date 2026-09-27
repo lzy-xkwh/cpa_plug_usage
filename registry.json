@@ -28,13 +28,13 @@
             "goos": "linux",
             "goarch": "amd64",
             "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.11/api-balance_0.9.11_linux_amd64.zip",
-            "sha256": "844f26072d463932c8d95d12440dfd3348844e45119fc760cb74cd93a94182c5"
+            "sha256": "a175b93e8ecb018b5542e180b77a90eee0403ae34af536ff8d851af4d772f83d"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
             "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.11/api-balance_0.9.11_linux_arm64.zip",
-            "sha256": "47df1fa216b326e0937aab171b95c45cbbfd33ceae3e6575fa5d54b2b51d6413"
+            "sha256": "027cd69d453f43783408530068cca16b36c375f7f813971a194ab3d4bbac8538"
           }
         ]
       },
