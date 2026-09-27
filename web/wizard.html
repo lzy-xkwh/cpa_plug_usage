@@ -58,7 +58,8 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
  <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
 </div>
 
-<div class="tabs"><button class="tab active" onclick="showView('accounts',this)">账号明细</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
+<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
+<div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；余额查询失败不会把未知值当作 0。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
 <div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>已用增量合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
 <div id="view-daily" style="display:none" class="card"><h2>每日用量快照</h2><div class="filterbar"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种</option></select></div><div id="dailyRows" class="tip">查询成功后，这里会记录本浏览器每个账号每天的首末快照。上游未提供历史 API 时，不会伪造历史用量。</div><button class="btn" onclick="clearDailySnapshots()">清除本机快照</button></div>
 
@@ -72,9 +73,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 </div>
 
-<div class="card" id="accountPanel"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
-<div class="selected-head"><h3>已选择账号余额</h3><button class="btn" id="selectedBalancesBtn" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">刷新余额</button></div>
-<div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div>
+<div class="card" id="accountPanel" style="display:none"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
 <div class="filterbar">
  <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
  <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
@@ -112,10 +111,13 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 var PRESETS = {
   "deepseek":   {label:"DeepSeek 官方", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
   "moonshot":   {label:"Moonshot Kimi 官方", ep:"https://api.moonshot.cn/v1/users/me/balance", bal:"data.available_balance", cur:"data.currency"},
-  "openrouter": {label:"OpenRouter", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
-  "one-api":    {label:"one-api 系中转站", lim:"hard_limit_usd", used:"total_usage", scale:"0.01"},
   "new-api":    {label:"New API 站点", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used"},
   "sub2api":    {label:"sub2api 站点", bal:"remaining", cur:"unit", plan:"planName"},
+  "one-api":    {label:"one-api 系中转站", lim:"hard_limit_usd", used:"total_usage", scale:"0.01"},
+  "openrouter": {label:"OpenRouter", ep:"https://openrouter.ai/api/v1/key", lim:"data.limit", used:"data.usage"},
+  "kuaipao":    {label:"快跑 Kuaipao", bal:"data.total_available", lim:"data.total_granted", used:"data.total_used", bscale:"0.000002", lscale:"0.000002", scale:"0.000002"},
+  "glm":        {label:"智谱 GLM 配额", ep:"https://open.bigmodel.cn/api/monitor/usage/quota/limit"},
+  "zai":        {label:"Z.AI GLM 配额", ep:"https://api.z.ai/api/monitor/usage/quota/limit"},
   "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
 };
 var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
@@ -128,6 +130,7 @@ var balanceCache = storageGet("api-balance-balance-v1", {});
 var inFlight = {};
 var keySetupOpened = false;
 var formDrafts = {};
+var currentView = "home";
 function profileFor(key){
   var profiles=DATA&&DATA.config&&DATA.config.profiles, c=credentialByKey(key), profile=profiles&&profiles[key];
   if(!profile&&profiles) profile=profiles[c.provider];
@@ -137,7 +140,7 @@ function profileFor(key){
 function formValues(box){
   if(!box) return {};
   var out={};
-  [["vendor",".f-vendor"],["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"],["used_path",".f-used"]].forEach(function(m){var el=box.querySelector(m[1]);if(el)out[m[0]]=el.value;});
+  [["vendor",".f-vendor"],["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"],["balance_scale",".f-bscale"],["limit_scale",".f-lscale"]].forEach(function(m){var el=box.querySelector(m[1]);if(el)out[m[0]]=el.value;});
   return out;
 }
 function captureFormDrafts(){
@@ -254,11 +257,15 @@ function loadError(text){
   msg(text, "err");
 }
 function showView(view, button){
+  currentView = view;
+  document.getElementById("view-home").style.display = view === "home" ? "block" : "none";
   document.getElementById("view-overview").style.display = view === "overview" ? "block" : "none";
   document.getElementById("view-daily").style.display = view === "daily" ? "block" : "none";
   document.getElementById("accountPanel").style.display = view === "accounts" ? "block" : "none";
+  document.getElementById("cfgCard").style.display = view === "accounts" && Object.keys(selected).length ? "block" : "none";
   document.querySelectorAll(".tab").forEach(function(b){ b.classList.remove("active"); });
   if (button) button.classList.add("active");
+  if (view === "home") renderSelectedBalances();
   if (view === "overview") renderSummary();
   if (view === "daily") renderDailySnapshots();
 }
@@ -504,17 +511,18 @@ function renderForms(){
   var box = document.getElementById("forms");
   var names = Object.keys(selected);
   if (!names.length) { box.innerHTML = '<div class="tip">在账号/站点列表中勾选「配置」后，这里会出现独立配置表单。</div>'; document.getElementById("cfgCard").style.display = "none"; return; }
-  document.getElementById("cfgCard").style.display = "block";
+  document.getElementById("cfgCard").style.display = currentView === "accounts" && names.length ? "block" : "none";
   var html = "";
   names.forEach(function(key){
     var c = credentialByKey(key), id = domKey(key);
     html += '<div class="configbox" id="f-' + id + '">' +
       '<b>' + esc(c.provider) + '</b> <span class="tip">' + esc(c.label || c.name || "账号") + ' · ' + esc(c.base_url || "无站点地址") + '</span>' +
-      '<div class="row"><div><label>厂商类型</label><select class="f-vendor" onchange="preset(' + jsArg(key) + ')">' + vendorOptions() + '</select></div>' +
+      '<div class="row"><div><label>余额接口策略（手动优先）</label><select class="f-vendor" onchange="preset(' + jsArg(key) + ')">' + vendorOptions() + '</select><div class="tip">中转站建议按实际实现选择：new-api → sub2api → one-api。选定后不会再依赖自动猜测。</div></div>' +
       '<div><label>站点地址 base_url</label><input class="f-base" placeholder="https://站点域名"></div></div>' +
       '<details><summary>高级：余额接口与 JSON 路径</summary><div class="row"><div><label>endpoint</label><input class="f-ep"></div><div><label>used_endpoint</label><input class="f-usep"></div></div>' +
       '<div class="row"><div><label>balance_path</label><input class="f-bal"></div><div><label>currency_path</label><input class="f-cur"></div><div><label>plan_path</label><input class="f-plan"></div></div>' +
-      '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div></details></div>';
+      '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div>' +
+      '<div class="row"><div><label>balance_scale</label><input class="f-bscale" value="1"></div><div><label>limit_scale</label><input class="f-lscale" value="1"></div></div></details></div>';
   });
   box.innerHTML = html;
   names.forEach(function(key){
@@ -530,7 +538,7 @@ function renderForms(){
 function applyDraft(key,draft){
   var box=document.getElementById("f-"+domKey(key)); if(!box||!draft)return;
   if(draft.vendor){box.querySelector(".f-vendor").value=draft.vendor;preset(key);}
-  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){if(draft[m]!==undefined)box.querySelector(m[1]).value=draft[m];});
+  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"],["balance_scale",".f-bscale"],["limit_scale",".f-lscale"]].forEach(function(m){if(draft[m[0]]!==undefined)box.querySelector(m[1]).value=draft[m[0]];});
 }
 function applyProfile(key){
   var box = document.getElementById("f-" + domKey(key));
@@ -539,7 +547,7 @@ function applyProfile(key){
   if (!profile && DATA && DATA.config && DATA.config.__top__) profile = DATA.config.__top__;
   if (!box || !profile) return;
   if (profile.vendor) { box.querySelector(".f-vendor").value = profile.vendor; preset(key); }
-  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"]].forEach(function(m){ if (profile[m[0]] !== undefined) box.querySelector(m[1]).value = profile[m[0]]; });
+  [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["plan_path",".f-plan"],["limit_path",".f-lim"],["used_path",".f-used"],["used_scale",".f-scale"],["balance_scale",".f-bscale"],["limit_scale",".f-lscale"]].forEach(function(m){ if (profile[m[0]] !== undefined) box.querySelector(m[1]).value = profile[m[0]]; });
 }
 function vendorOptions(){
   var h = "";
@@ -558,6 +566,8 @@ function preset(key){
   box.querySelector(".f-used").value = p.used || "";
   box.querySelector(".f-usep").value = p.usedEp || "";
   box.querySelector(".f-scale").value = p.scale || "1";
+  box.querySelector(".f-bscale").value = p.bscale || "1";
+  box.querySelector(".f-lscale").value = p.lscale || "1";
   box.querySelector(".f-plan").value = p.plan || "";
 }
 function collectConfig(){
@@ -580,6 +590,8 @@ function collectConfig(){
     if (v !== "custom") p.vendor = v;
     [["base_url",".f-base"],["endpoint",".f-ep"],["used_endpoint",".f-usep"],["balance_path",".f-bal"],["currency_path",".f-cur"],["limit_path",".f-lim"],["used_path",".f-used"],["plan_path",".f-plan"]].forEach(function(m){ var val = box.querySelector(m[1]).value.trim(); if (val) p[m[0]] = val; });
     var sc = parseFloat(box.querySelector(".f-scale").value); if (!isNaN(sc) && sc !== 1) p.used_scale = sc;
+    var bsc = parseFloat(box.querySelector(".f-bscale").value); if (!isNaN(bsc) && bsc !== 1) p.balance_scale = bsc;
+    var lsc = parseFloat(box.querySelector(".f-lscale").value); if (!isNaN(lsc) && lsc !== 1) p.limit_scale = lsc;
     cfg.profiles[key] = p;
   });
   var defBase = document.getElementById("defaultBase").value.trim();

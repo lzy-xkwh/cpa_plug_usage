@@ -9,7 +9,7 @@ function loadWizard(options = {}) {
   const values = new Map();
   const elements = new Map();
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {id, value:'', textContent:'', innerHTML:'', style:{display:''}, className:'', disabled:false, dataset:{}, querySelector(){ return null; }});
+    if (!elements.has(id)) elements.set(id, {id, value:'', textContent:'', innerHTML:'', style:{display:''}, className:'', classList:{add(){}, remove(){}}, disabled:false, dataset:{}, querySelector(){ return null; }});
     return elements.get(id);
   }
   const localStorage = options.throwStorage ? {
@@ -85,6 +85,18 @@ test('in-flight requests are deduplicated and failures are cached', async () => 
   assert.equal(context.balanceCache['deepseek@a'].message, 'mock failure');
 });
 
+test('home view shows selected balances and hides account configuration', () => {
+  const {context, element} = loadWizard();
+  context.selected = {a:true};
+  context.showView('home', element('homeTab'));
+  assert.equal(element('view-home').style.display, 'block');
+  assert.equal(element('accountPanel').style.display, 'none');
+  assert.equal(element('cfgCard').style.display, 'none');
+  context.showView('accounts', element('accountsTab'));
+  assert.equal(element('view-home').style.display, 'none');
+  assert.equal(element('accountPanel').style.display, 'block');
+  assert.equal(element('cfgCard').style.display, 'block');
+});
 test('selected account table ignores unselected accounts and escapes labels', () => {
   const {context, element} = loadWizard();
   context.DATA = {providers:[], credentials:[

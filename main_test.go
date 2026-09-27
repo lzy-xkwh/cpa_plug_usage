@@ -128,7 +128,26 @@ func TestUnknownVendorRejected(t *testing.T) {
 	}
 }
 
-func TestOneApiPresetAndDerivedBalance(t *testing.T) {
+func TestCommonRelayPresets(t *testing.T) {
+	cases := []struct {
+		vendor, endpoint string
+	}{
+		{"new-api", "{base_url}/api/usage/token/"},
+		{"sub2api", "{base_url}/v1/usage"},
+		{"one-api", "{base_url}/v1/dashboard/billing/subscription"},
+	}
+	for _, tc := range cases {
+		if err := applyConfig([]byte("vendor: " + tc.vendor + "\nbase_url: https://relay.example.com\n")); err != nil {
+			t.Fatalf("applyConfig(%s) error = %v", tc.vendor, err)
+		}
+		got := currentConfig()
+		if got.Vendor != tc.vendor || got.Endpoint != tc.endpoint {
+			t.Fatalf("%s profile = vendor %q endpoint %q", tc.vendor, got.Vendor, got.Endpoint)
+		}
+	}
+}
+
+
 	if err := applyConfig([]byte("vendor: one-api\nbase_url: https://relay.example.com\n")); err != nil {
 		t.Fatalf("applyConfig() error for one-api preset = %v", err)
 	}
@@ -241,6 +260,43 @@ func TestNormalizeQuota(t *testing.T) {
 	}
 	if resp.Subscription == nil || resp.Subscription.Plan != "pro" {
 		t.Fatalf("subscription = %#v", resp.Subscription)
+	}
+}
+
+func TestNormalizeNewAPIQuota(t *testing.T) {
+	document := map[string]any{"data": map[string]any{
+		"total_available": 500000.0,
+		"total_granted":   1000000.0,
+		"total_used":      500000.0,
+	}}
+	resp, err := normalizeQuota(document, document, false, config{
+		BalancePath: "data.total_available", BalanceScale: 0.000002,
+		LimitPath: "data.total_granted", LimitScale: 0.000002,
+		UsedPath: "data.total_used", UsedScale: 0.000002,
+	})
+	if err != nil {
+		t.Fatalf("normalizeQuota(new-api) error = %v", err)
+	}
+	bucket := resp.Groups[0].Buckets[0]
+	if bucket.Balance != 1 || bucket.Limit != 2 || bucket.Used != 1 || bucket.RemainingFraction != 0.5 {
+		t.Fatalf("new-api quota = %#v, want balance=1 limit=2 used=1 fraction=.5", bucket)
+	}
+}
+
+func TestNormalizeGLMQuotaLimits(t *testing.T) {
+	document := map[string]any{"data": map[string]any{"limits": []any{
+		map[string]any{"type": "CREDIT_LIMIT", "percentage": 25.0, "currentValue": 750.0, "usage": 1000.0, "unit": 3.0},
+		map[string]any{"type": "TIME_LIMIT", "percentage": 10.0, "currentValue": 90.0, "usage": 100.0, "unit": 6.0},
+	}}}
+	resp, err := normalizeQuota(document, nil, false, config{WindowName: "GLM 配额"})
+	if err != nil {
+		t.Fatalf("normalizeQuota(glm) error = %v", err)
+	}
+	if len(resp.Groups[0].Buckets) != 2 {
+		t.Fatalf("GLM bucket count = %d, want 2", len(resp.Groups[0].Buckets))
+	}
+	if resp.Groups[0].Buckets[0].RemainingFraction != 0.75 || resp.Groups[0].Buckets[1].RemainingFraction != 0.9 {
+		t.Fatalf("GLM remaining fractions = %#v", resp.Groups[0].Buckets)
 	}
 }
 
@@ -383,6 +439,10 @@ func TestVendorByHost(t *testing.T) {
 		"https://api.deepseek.com":     "deepseek",
 		"https://api.moonshot.cn/v1":   "moonshot",
 		"https://openrouter.ai/api/v1": "openrouter",
+		"https://open.bigmodel.cn/v1":  "glm",
+		"https://api.z.ai/v1":          "zai",
+		"https://kuaipao.ai/v1":        "kuaipao",
+		"https://kuaipao.pro/v1":       "kuaipao",
 		"https://relay.example.com":    "",
 	}
 	for input, want := range cases {
@@ -413,6 +473,10 @@ func TestAutoDetectByProviderName(t *testing.T) {
 	}
 	if profile.BaseURL != "https://relay.example.com" || profile.Endpoint != "{base_url}/v1/usage" {
 		t.Fatalf("sub2api auto profile = %#v", profile)
+	}
+	profile, result, err = autoDetectProfile(cfg, quotaFetchRequest{Provider: "zhipu-coding-plan"})
+	if err != nil || result != nil || profile.Endpoint != "https://open.bigmodel.cn/api/monitor/usage/quota/limit" || profile.CredentialPrefix != "" {
+		t.Fatalf("GLM auto profile = %#v, err=%v result=%v", profile, err, result)
 	}
 }
 

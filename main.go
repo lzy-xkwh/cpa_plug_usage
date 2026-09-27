@@ -96,6 +96,8 @@ type config struct {
 	UsedEndpoint      string            `yaml:"used_endpoint" json:"used_endpoint"`
 	Method            string            `yaml:"method" json:"method"`
 	UsedScale         float64           `yaml:"used_scale" json:"used_scale"`
+	BalanceScale      float64           `yaml:"balance_scale" json:"balance_scale"`
+	LimitScale        float64           `yaml:"limit_scale" json:"limit_scale"`
 	Headers           map[string]string `yaml:"headers" json:"headers"`
 	Query             map[string]string `yaml:"query" json:"query"`
 	CredentialPaths   []string          `yaml:"credential_paths" json:"credential_paths"`
@@ -129,10 +131,13 @@ type config struct {
 // vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
 // 预设只填补未显式配置的字段，用户配置始终优先。
 type vendorPreset struct {
-	Endpoint     string
-	UsedEndpoint string
-	UsedScale    float64
-	BalancePath  string
+	Endpoint          string
+	UsedEndpoint      string
+	UsedScale         float64
+	BalanceScale      float64
+	LimitScale        float64
+	CredentialPrefix  string
+	BalancePath       string
 	UsedPath     string
 	LimitPath    string
 	CurrencyPath string
@@ -177,6 +182,27 @@ var vendorPresets = map[string]vendorPreset{
 		PlanPath:    "data.name",
 		WindowName:  "余额",
 	},
+	"kuaipao": {
+		Endpoint:     "{base_url}/api/usage/token/",
+		BalancePath:  "data.total_available",
+		BalanceScale: 0.000002,
+		LimitPath:    "data.total_granted",
+		LimitScale:   0.000002,
+		UsedPath:     "data.total_used",
+		UsedScale:    0.000002,
+		PlanPath:     "data.name",
+		WindowName:   "余额",
+	},
+	"glm": {
+		Endpoint:         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+		CredentialPrefix: "",
+		WindowName:       "GLM 配额",
+	},
+	"zai": {
+		Endpoint:         "https://api.z.ai/api/monitor/usage/quota/limit",
+		CredentialPrefix: "",
+		WindowName:       "GLM 配额",
+	},
 	"sub2api": {
 		Endpoint:     "{base_url}/v1/usage",
 		BalancePath:  "remaining",
@@ -188,7 +214,7 @@ var vendorPresets = map[string]vendorPreset{
 	},
 }
 
-var vendorNames = []string{"custom", "deepseek", "moonshot", "one-api", "openrouter", "new-api", "sub2api"}
+var vendorNames = []string{"custom", "deepseek", "moonshot", "new-api", "sub2api", "one-api", "openrouter", "kuaipao", "glm", "zai"}
 
 // autoProbeStrategies 未匹配厂商时按顺序探测的常见站点类型。
 var autoProbeStrategies = []string{"new-api", "sub2api", "one-api"}
@@ -434,6 +460,8 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "endpoint", Type: "string", Description: "余额接口地址，支持 {base_url}、{provider}、{auth_id}、{auth_index} 占位符；vendor 预设已含官方地址，仅自定义时填写。"},
 				{Name: "used_endpoint", Type: "string", Description: "可选，已用额度的独立查询地址（如 one-api 系的 billing/usage）；留空则从主响应中取已用额度。"},
 				{Name: "used_scale", Type: "string", Description: "可选，已用额度的换算倍率，例如 one-api 系 usage 单位为美分时填 0.01；默认 1。"},
+				{Name: "balance_scale", Type: "string", Description: "可选，余额接口原始值的换算倍率；New API quota 通常为 0.000002（500000 quota = 1 美元）。"},
+				{Name: "limit_scale", Type: "string", Description: "可选，总额度接口原始值的换算倍率；New API quota 通常为 0.000002。"},
 				{Name: "base_url", Type: "string", Description: "可选，one-api 系等预设中 {base_url} 占位符使用的站点地址；未填写时使用凭据属性中的 base_url。"},
 				{Name: "method", Type: "enum", Description: "余额请求使用的 HTTP 方法。", EnumValues: []string{"GET", "POST"}},
 				{Name: "credential_paths", Type: "string", Description: "在 CPA storage_json 中查找令牌/API Key 的 JSON 路径，多个用英文逗号分隔。"},
@@ -567,6 +595,21 @@ func applyVendorPreset(next *config) error {
 	if preset.UsedScale != 0 && next.UsedScale == 0 {
 		next.UsedScale = preset.UsedScale
 	}
+	if preset.BalanceScale != 0 && next.BalanceScale == 0 {
+		next.BalanceScale = preset.BalanceScale
+	}
+	if preset.LimitScale != 0 && next.LimitScale == 0 {
+		next.LimitScale = preset.LimitScale
+	}
+	if preset.CredentialPrefix != "" && next.CredentialPrefix == "" {
+		next.CredentialPrefix = preset.CredentialPrefix
+	}
+	if vendor == "glm" || vendor == "zai" {
+		// GLM Coding Plan 使用 Authorization: <id.secret>，不是 Bearer <id.secret>。
+		if next.CredentialPrefix == "Bearer " {
+			next.CredentialPrefix = ""
+		}
+	}
 	if next.BalancePath == "" {
 		next.BalancePath = preset.BalancePath
 	}
@@ -608,6 +651,12 @@ func normalizeDefaults(next *config) error {
 	}
 	if next.UsedScale <= 0 {
 		next.UsedScale = 1
+	}
+	if next.BalanceScale <= 0 {
+		next.BalanceScale = 1
+	}
+	if next.LimitScale <= 0 {
+		next.LimitScale = 1
 	}
 	if next.WindowName == "" {
 		next.WindowName = "余额"
@@ -835,6 +884,18 @@ func setConfigScalar(out *config, key, value string) error {
 			return fmt.Errorf("used_scale 必须是数字")
 		}
 		out.UsedScale = parsed
+	case "balance_scale":
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("balance_scale 必须是数字")
+		}
+		out.BalanceScale = parsed
+	case "limit_scale":
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("limit_scale 必须是数字")
+		}
+		out.LimitScale = parsed
 	case "method":
 		out.Method = value
 	case "credential_paths":
@@ -1002,7 +1063,8 @@ func fetchQuotaWithSelectionGate(req quotaFetchRequest, enforceSelection bool) (
 
 // fetchQuotaWithProfile 使用已解析的档案完成一次余额查询。
 func fetchQuotaWithProfile(profile config, req quotaFetchRequest) (quotaFetchResponse, error) {
-	if profile.BalancePath == "" && (profile.LimitPath == "" || profile.UsedPath == "") {
+	isMonitorQuota := strings.Contains(profile.Endpoint, "/api/monitor/usage/quota/limit")
+	if !isMonitorQuota && profile.BalancePath == "" && (profile.LimitPath == "" || profile.UsedPath == "") {
 		return quotaFetchResponse{}, errors.New("未配置 balance_path，且缺少 limit_path + used_path 组合（无法推导余额）")
 	}
 	document, err := fetchBalanceDocument(profile.Endpoint, profile, req, true)
@@ -1024,11 +1086,41 @@ func fetchQuotaWithProfile(profile config, req quotaFetchRequest) (quotaFetchRes
 // 1. provider 名即为厂商名；2. base_url 域名特征；3. 已缓存的探测结果；
 // 4. 按常见站点类型逐个探测。全部失败时返回指导性的错误信息。
 // 探测直接命中时 result 非空（复用探测请求的结果，避免重复查询）。
+func vendorAlias(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "glm", "zhipu", "zhipuai", "zhipu-coding-plan":
+		return "glm"
+	case "zai", "z-ai", "z.ai":
+		return "zai"
+	default:
+		return ""
+	}
+}
+
 func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchResponse, error) {
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
-	if _, ok := vendorPresets[provider]; ok {
+	baseURL := discoverBaseURL(&cfg, req)
+	if hostVendor := vendorByHost(baseURL); hostVendor != "" {
 		profile := cfg
-		profile.Vendor = provider
+		profile.BaseURL = baseURL
+		profile.Vendor = hostVendor
+		if err := applyVendorPreset(&profile); err != nil {
+			return config{}, nil, err
+		}
+		if err := normalizeDefaults(&profile); err != nil {
+			return config{}, nil, err
+		}
+		return profile, nil, nil
+	}
+	presetVendor := vendorAlias(provider)
+	if presetVendor == "" {
+		if _, ok := vendorPresets[provider]; ok {
+			presetVendor = provider
+		}
+	}
+	if presetVendor != "" {
+		profile := cfg
+		profile.Vendor = presetVendor
 		if err := applyVendorPreset(&profile); err != nil {
 			return config{}, nil, err
 		}
@@ -1045,7 +1137,6 @@ func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchRe
 		return profile, nil, nil
 	}
 
-	baseURL := discoverBaseURL(&cfg, req)
 	if baseURL == "" {
 		return config{}, nil, missingBaseURLError(provider)
 	}
@@ -1159,6 +1250,12 @@ func vendorByHost(baseURL string) string {
 		return "moonshot"
 	case matches("openrouter.ai"):
 		return "openrouter"
+	case matches("open.bigmodel.cn", "dev.bigmodel.cn"):
+		return "glm"
+	case matches("api.z.ai"):
+		return "zai"
+	case matches("kuaipao.ai", "kuaipao.pro"):
+		return "kuaipao"
 	default:
 		return ""
 	}
@@ -1177,7 +1274,11 @@ func fetchBalanceDocument(endpointTemplate string, cfg config, req quotaFetchReq
 	}
 	credential := findCredential(req.StorageJSON, cfg.CredentialPaths)
 	if credential != "" && cfg.CredentialHeader != "" {
-		headers[cfg.CredentialHeader] = []string{cfg.CredentialPrefix + credential}
+		prefix := cfg.CredentialPrefix
+		if (cfg.Vendor == "glm" || cfg.Vendor == "zai") && prefix == "Bearer " {
+			prefix = ""
+		}
+		headers[cfg.CredentialHeader] = []string{prefix + credential}
 	}
 	if withQuery && len(cfg.Query) > 0 {
 		parsed, err := url.Parse(endpoint)
@@ -1211,16 +1312,68 @@ func fetchBalanceDocument(endpointTemplate string, cfg config, req quotaFetchReq
 }
 
 func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg config) (quotaFetchResponse, error) {
+	if limits, ok := valueAt(document, "data.limits"); ok {
+		if items, ok := limits.([]any); ok {
+			buckets := make([]quotaBucket, 0, len(items))
+			for _, raw := range items {
+				item, ok := raw.(map[string]any)
+				if !ok || (stringValue(item["type"]) != "CREDIT_LIMIT" && stringValue(item["type"]) != "TOKENS_LIMIT" && stringValue(item["type"]) != "TIME_LIMIT") {
+					continue
+				}
+				percentage, hasPercentage := numberAt(item, "percentage")
+				used, hasUsed := numberAt(item, "currentValue")
+				limit, hasLimit := numberAt(item, "usage")
+				remaining, hasRemaining := numberAt(item, "remaining")
+				if !hasRemaining && hasPercentage {
+					remaining = 100 - percentage
+					hasRemaining = true
+				}
+				if !hasRemaining {
+					continue
+				}
+				window := "GLM 配额"
+				if unit, ok := numberAt(item, "unit"); ok {
+					switch int(unit) {
+					case 3:
+						window = "5 小时额度"
+					case 6:
+						window = "每周额度"
+					case 4:
+						window = "每日额度"
+					}
+				}
+				fraction := remaining / 100
+				if hasLimit && limit > 0 && hasUsed {
+					fraction = (limit - used) / limit
+				}
+				fraction = math.Max(0, math.Min(1, fraction))
+				description := window + " 剩余 " + formatNumber(remaining) + "%"
+				if hasUsed && hasLimit {
+					description += "（已用 " + formatNumber(used) + " / " + formatNumber(limit) + " 积分）"
+				}
+				buckets = append(buckets, quotaBucket{Window: window, RemainingFraction: fraction, Description: description})
+			}
+			if len(buckets) > 0 {
+				return quotaFetchResponse{Groups: []quotaGroup{{DisplayName: "GLM 配额", Buckets: buckets}}}, nil
+			}
+		}
+	}
 	balance, hasBalance := numberAt(document, cfg.BalancePath)
 	used, hasUsed := numberAt(usedDocument, cfg.UsedPath)
 	if !hasUsed && hasUsedDocument {
 		// 第二端点解析失败时回退到主文档。
 		used, hasUsed = numberAt(document, cfg.UsedPath)
 	}
+	limit, hasLimit := numberAt(document, cfg.LimitPath)
 	if hasUsed && cfg.UsedScale != 1 {
 		used *= cfg.UsedScale
 	}
-	limit, hasLimit := numberAt(document, cfg.LimitPath)
+	if hasBalance && cfg.BalanceScale != 1 {
+		balance *= cfg.BalanceScale
+	}
+	if hasLimit && cfg.LimitScale != 1 {
+		limit *= cfg.LimitScale
+	}
 	if !hasBalance && hasLimit && hasUsed {
 		// 只有总额度与已用额度时，余额 = 总额度 - 已用。
 		balance = limit - used
@@ -1351,6 +1504,19 @@ func findCredential(raw []byte, paths []string) string {
 		}
 	}
 	return ""
+}
+
+func stringValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case json.Number:
+		return v.String()
+	case float64:
+		return formatNumber(v)
+	default:
+		return ""
+	}
 }
 
 func numberAt(document any, path string) (float64, bool) {
@@ -1788,6 +1954,12 @@ func profileToPage(p config) map[string]any {
 	set("window_name", p.WindowName)
 	if p.UsedScale != 0 && p.UsedScale != 1 {
 		m["used_scale"] = p.UsedScale
+	}
+	if p.BalanceScale != 0 && p.BalanceScale != 1 {
+		m["balance_scale"] = p.BalanceScale
+	}
+	if p.LimitScale != 0 && p.LimitScale != 1 {
+		m["limit_scale"] = p.LimitScale
 	}
 	return m
 }
@@ -2250,6 +2422,8 @@ var wizardTopLevelKeys = map[string]struct{}{
 	"endpoint":             {},
 	"used_endpoint":        {},
 	"used_scale":           {},
+	"balance_scale":        {},
+	"limit_scale":          {},
 	"method":               {},
 	"balance_path":         {},
 	"used_path":            {},
@@ -2266,6 +2440,8 @@ var wizardProfileKeys = map[string]struct{}{
 	"endpoint":      {},
 	"used_endpoint": {},
 	"used_scale":    {},
+	"balance_scale": {},
+	"limit_scale":   {},
 	"balance_path":  {},
 	"used_path":     {},
 	"limit_path":    {},
@@ -2302,10 +2478,10 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 				return nil, errors.New("priority 必须是整数")
 			}
 			clean[key] = value
-		case "used_scale":
+		case "used_scale", "balance_scale", "limit_scale":
 			var value float64
 			if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
-				return nil, errors.New("used_scale 必须是正数")
+				return nil, errors.New(key + " 必须是正数")
 			}
 			clean[key] = value
 		case "method":
@@ -2367,10 +2543,10 @@ func validateWizardProfiles(raw json.RawMessage) (map[string]any, error) {
 			if _, ok := wizardProfileKeys[key]; !ok {
 				return nil, fmt.Errorf("档案 %q 包含不支持的字段 %s", name, key)
 			}
-			if key == "used_scale" {
+			if key == "used_scale" || key == "balance_scale" || key == "limit_scale" {
 				var value float64
 				if err := json.Unmarshal(rawValue, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
-					return nil, fmt.Errorf("档案 %q 的 used_scale 必须是正数", name)
+					return nil, fmt.Errorf("档案 %q 的 %s 必须是正数", name, key)
 				}
 				cleanProfile[key] = value
 				continue
