@@ -1063,6 +1063,25 @@ func fetchQuotaWithSelectionGate(req quotaFetchRequest, enforceSelection bool) (
 
 // fetchQuotaWithProfile 使用已解析的档案完成一次余额查询。
 func fetchQuotaWithProfile(profile config, req quotaFetchRequest) (quotaFetchResponse, error) {
+	baseVendor := vendorByHost(discoverRequestBaseURL(req))
+	providerIsGLM := strings.EqualFold(strings.TrimSpace(req.Provider), "openai-compatible-glm") || strings.EqualFold(strings.TrimSpace(req.Provider), "zhipu-coding-plan")
+	shouldFixGLM := providerIsGLM && (profile.Endpoint == "" || vendorByHost(profile.Endpoint) == "glm")
+	if profile.Vendor == "glm" || profile.Vendor == "zai" || shouldFixGLM || ((baseVendor == "glm" || baseVendor == "zai") && (profile.Endpoint == "" || vendorByHost(profile.Endpoint) == baseVendor)) {
+		if shouldFixGLM {
+			profile.Vendor = "glm"
+		} else if profile.Vendor != "zai" {
+			profile.Vendor = baseVendor
+			if profile.Vendor == "" {
+				profile.Vendor = "glm"
+			}
+		}
+		if profile.Endpoint == "" || strings.Contains(profile.Endpoint, "/api/paas/") || strings.HasSuffix(strings.TrimRight(profile.Endpoint, "/"), "/api/paas") {
+			profile.Endpoint = vendorPresets[profile.Vendor].Endpoint
+		}
+		if profile.CredentialPrefix == "Bearer " {
+			profile.CredentialPrefix = ""
+		}
+	}
 	isMonitorQuota := strings.Contains(profile.Endpoint, "/api/monitor/usage/quota/limit")
 	if !isMonitorQuota && profile.BalancePath == "" && (profile.LimitPath == "" || profile.UsedPath == "") {
 		return quotaFetchResponse{}, errors.New("未配置 balance_path，且缺少 limit_path + used_path 组合（无法推导余额）")
@@ -1088,7 +1107,7 @@ func fetchQuotaWithProfile(profile config, req quotaFetchRequest) (quotaFetchRes
 // 探测直接命中时 result 非空（复用探测请求的结果，避免重复查询）。
 func vendorAlias(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "glm", "zhipu", "zhipuai", "zhipu-coding-plan":
+	case "openai-compatible-glm", "glm", "zhipu", "zhipuai", "zhipu-coding-plan":
 		return "glm"
 	case "zai", "z-ai", "z.ai":
 		return "zai"
@@ -1312,12 +1331,31 @@ func fetchBalanceDocument(endpointTemplate string, cfg config, req quotaFetchReq
 }
 
 func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg config) (quotaFetchResponse, error) {
+	isGLMQuota := cfg.Vendor == "glm" || cfg.Vendor == "zai" || strings.Contains(cfg.Endpoint, "/api/monitor/usage/quota/limit")
+	if isGLMQuota {
+		if success, ok := valueAt(document, "success"); ok {
+			if accepted, isBool := success.(bool); isBool && !accepted {
+				message, _ := stringAt(document, "msg")
+				if message == "" {
+					message, _ = stringAt(document, "message")
+				}
+				if message != "" {
+					return quotaFetchResponse{}, fmt.Errorf("GLM 配额接口返回失败：%s", message)
+				}
+				return quotaFetchResponse{}, errors.New("GLM 配额接口拒绝了当前凭据")
+			}
+		}
+	}
 	if limits, ok := valueAt(document, "data.limits"); ok {
 		if items, ok := limits.([]any); ok {
 			buckets := make([]quotaBucket, 0, len(items))
 			for _, raw := range items {
 				item, ok := raw.(map[string]any)
-				if !ok || (stringValue(item["type"]) != "CREDIT_LIMIT" && stringValue(item["type"]) != "TOKENS_LIMIT" && stringValue(item["type"]) != "TIME_LIMIT") {
+				if !ok {
+					continue
+				}
+				quotaType := strings.ToUpper(stringValue(item["type"]))
+				if quotaType != "CREDIT_LIMIT" && quotaType != "TOKENS_LIMIT" && quotaType != "TIME_LIMIT" {
 					continue
 				}
 				percentage, hasPercentage := numberAt(item, "percentage")
@@ -1357,6 +1395,9 @@ func normalizeQuota(document any, usedDocument any, hasUsedDocument bool, cfg co
 				return quotaFetchResponse{Groups: []quotaGroup{{DisplayName: "GLM 配额", Buckets: buckets}}}, nil
 			}
 		}
+	}
+	if isGLMQuota {
+		return quotaFetchResponse{}, errors.New("GLM 配额接口未返回可用的 Coding Plan 额度；当前凭据可能是普通 /api/paas/v4 API Key（按量计费），而非编程套餐密钥。普通余额不能从该接口读取，请在智谱控制台查看；不要将其显示为 0")
 	}
 	balance, hasBalance := numberAt(document, cfg.BalancePath)
 	used, hasUsed := numberAt(usedDocument, cfg.UsedPath)
@@ -2123,6 +2164,8 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 				status.Status = "ok"
 				if entry.active == 0 {
 					status.Note = "插件支持该供应商；当前凭据均已停用，启用后即可显示余额"
+				} else if strings.HasPrefix(provider, "openai-compatible-glm") {
+					status.Note = "可查询 Coding Plan 配额；普通 /api/paas/v4 充值余额不能由该接口读取"
 				} else {
 					status.Note = "余额已在供应商页签显示，无需任何配置"
 				}
@@ -2353,6 +2396,7 @@ func credentialForProvider(provider string, credentialKey ...string) (providerCr
 // providerBalanceResult 返回给向导页的单个供应商余额（不含任何密钥）。
 type providerBalanceResult struct {
 	OK          bool    `json:"ok"`
+	HasBalance  bool    `json:"has_balance"`
 	Description string  `json:"description,omitempty"`
 	Fraction    float64 `json:"fraction,omitempty"`
 	Balance     float64 `json:"balance"`
@@ -2390,17 +2434,27 @@ func fetchProviderBalance(provider string, credentialKeys ...string) providerBal
 	if err != nil {
 		return providerBalanceResult{Message: err.Error()}
 	}
-	result := providerBalanceResult{OK: true}
+	result := providerBalanceResult{OK: true, HasBalance: true}
 	if len(resp.Groups) > 0 && len(resp.Groups[0].Buckets) > 0 {
-		bucket := resp.Groups[0].Buckets[0]
-		result.Description = bucket.Description
+		group := resp.Groups[0]
+		bucket := group.Buckets[0]
+		if group.DisplayName == "GLM 配额" {
+			result.HasBalance = false
+			descriptions := make([]string, 0, len(group.Buckets))
+			for _, window := range group.Buckets {
+				descriptions = append(descriptions, window.Description)
+			}
+			result.Description = strings.Join(descriptions, " · ")
+		} else {
+			result.Description = bucket.Description
+			result.Balance = bucket.Balance
+			result.Limit = bucket.Limit
+			result.Used = bucket.Used
+			result.HasLimit = bucket.HasLimit
+			result.HasUsed = bucket.HasUsed
+			result.Currency = bucket.Currency
+		}
 		result.Fraction = bucket.RemainingFraction
-		result.Balance = bucket.Balance
-		result.Limit = bucket.Limit
-		result.Used = bucket.Used
-		result.HasLimit = bucket.HasLimit
-		result.HasUsed = bucket.HasUsed
-		result.Currency = bucket.Currency
 	}
 	if resp.Subscription != nil && strings.TrimSpace(resp.Subscription.Plan) != "" {
 		result.Description += " · " + resp.Subscription.Plan

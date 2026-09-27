@@ -35,7 +35,7 @@ th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
 .tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
 .balance-detail{white-space:normal;overflow-wrap:anywhere;line-height:1.6}td{overflow-wrap:anywhere}
 .quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
-.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}
+.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}.configbox.focus-config{border-color:var(--ac);box-shadow:0 0 0 2px var(--soft)}
 details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
 textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
@@ -73,22 +73,6 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 </div>
 
-<div class="card" id="accountPanel" style="display:none"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
-<div class="filterbar">
- <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
- <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
- <span class="tip" id="providerCount"></span>
-</div>
-<div class="table-scroll"><table><thead><tr><th style="width:18%">供应商 / 账号</th><th style="width:25%">站点地址</th><th style="width:17%">状态</th><th style="width:25%">余额 / 用量</th><th style="width:120px">操作</th></tr></thead>
-<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
-<div class="tip" id="provNote"></div>
-<div class="selection-bar" id="selectionBar" style="display:none;margin-top:10px"><span class="tip">显示选择会保存到 CPA，刷新后保留：</span><button class="btn primary" onclick="saveSelection()">保存显示选择</button><span id="selectionMsg" class="tip"></span></div>
-<details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
-<div class="tip" id="credInfo"></div>
-<table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
-</details>
-</div>
-
 <div class="card" id="cfgCard" style="display:none">
 <h2>② 为选中的供应商配置余额查询</h2>
 <div id="forms"></div>
@@ -107,6 +91,22 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 </div>
 
+<div class="card" id="accountPanel" style="display:none"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="loadData(this)">刷新</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
+<div class="filterbar">
+ <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
+ <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
+ <span class="tip" id="providerCount"></span>
+</div>
+<div class="table-scroll"><table><thead><tr><th style="width:18%">供应商 / 账号</th><th style="width:25%">站点地址</th><th style="width:17%">状态</th><th style="width:25%">余额 / 用量</th><th style="width:120px">操作</th></tr></thead>
+<tbody id="provRows"><tr><td colspan="5" class="tip">加载中…</td></tr></tbody></table></div>
+<div class="tip" id="provNote"></div>
+<div class="selection-bar" id="selectionBar" style="display:none;margin-top:10px"><span class="tip">显示选择会保存到 CPA，刷新后保留：</span><button class="btn primary" onclick="saveSelection()">保存显示选择</button><span id="selectionMsg" class="tip"></span></div>
+<details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
+<div class="tip" id="credInfo"></div>
+<table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
+</details>
+</div>
+
 <script>
 var PRESETS = {
   "deepseek":   {label:"DeepSeek 官方", ep:"https://api.deepseek.com/user/balance", bal:"balance_infos.0.total_balance", cur:"balance_infos.0.currency"},
@@ -121,6 +121,7 @@ var PRESETS = {
   "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
 };
 var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
+var PROVIDER_PRESET = {"openai-compatible-glm":"glm","zhipu-coding-plan":"glm","zhipu":"glm","zhipuai":"glm"};
 var DATA = null;
 var selected = {};
 var displaySel = {};
@@ -304,7 +305,7 @@ function renderSummary(){
     var cur=resultCurrency(r) || "未知币种";
     if(!byCurrency[cur]) byCurrency[cur]={balance:0,balanceKnown:true,used:0,usedKnown:true,count:0};
     var g=byCurrency[cur]; g.count++;
-    if(knownNumber(r.balance)) g.balance += Number(r.balance); else g.balanceKnown=false;
+    if(r.has_balance !== false && knownNumber(r.balance)) g.balance += Number(r.balance); else g.balanceKnown=false;
     if(r.has_used && knownNumber(r.used)) g.used += Number(r.used); else g.usedKnown=false;
   });
   currencies=Object.keys(byCurrency).filter(function(c){return c!=="未知币种";}); renderCurrencyOptions("summaryCurrency",currencies);
@@ -326,7 +327,7 @@ function recordSnapshot(key, result){
   var currency=resultCurrency(result), day=localDay(), at=nowISO(), items=snapshotItems();
   var idx=-1;
   items.forEach(function(x,i){if(x.key===key && x.day===day && String(x.currency||"").toUpperCase()===currency)idx=i;});
-  var used=knownNumber(result.used)?Number(result.used):null, balance=knownNumber(result.balance)?Number(result.balance):null;
+  var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
   if(idx<0) items.push({key:key,day:day,currency:currency,firstAt:at,lastAt:at,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,limit:knownNumber(result.limit)?Number(result.limit):null});
   else {var x=items[idx]; x.lastAt=at; x.lastBalance=balance; x.lastUsed=used; if(knownNumber(result.limit)){x.limit=Number(result.limit);x.hasLimit=!!result.has_limit;}}
   items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
@@ -453,6 +454,8 @@ function renderSelectedBalances(){
 
 function togglePick(key,on){
   captureFormDrafts(); if(on) selected[key]=true; else delete selected[key]; renderForms();
+  var form=document.getElementById("f-"+domKey(key));
+  if(on&&form){form.classList.add("focus-config");if(form.scrollIntoView)form.scrollIntoView({behavior:"smooth",block:"center"});}
 }
 function toggleDisplay(key,on){
   if(on) displaySel[key]=true; else delete displaySel[key]; storageSet("api-balance-display-v1",Object.keys(displaySel));
@@ -465,7 +468,7 @@ function renderBalanceResult(key,result){
   balanceCells(key).forEach(function(cell){
     var stamp=result&&result.fetched_at?new Date(result.fetched_at).toLocaleString():"时间未知";
     if(!result||!result.ok){cell.innerHTML='<span class="tag no">查询失败</span><div class="tip err">'+esc((result&&result.message)||"请检查配置")+' · '+esc(stamp)+'</div>';return;}
-    var lines=[]; if(knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
+    var lines=[]; if(result.has_balance!==false&&knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
     if(result.has_limit&&knownNumber(result.limit))lines.push("总额 "+formatAmount(result.limit,result.currency));
     if(result.has_used&&knownNumber(result.used))lines.push("当前 used "+formatAmount(result.used,result.currency));
     var detail=lines.length?lines.join(" · "):(result.description||"查询成功"); cell.innerHTML='<span class="tag ok balance-detail">'+esc(detail)+'</span>';
@@ -517,12 +520,13 @@ function renderForms(){
     var c = credentialByKey(key), id = domKey(key);
     html += '<div class="configbox" id="f-' + id + '">' +
       '<b>' + esc(c.provider) + '</b> <span class="tip">' + esc(c.label || c.name || "账号") + ' · ' + esc(c.base_url || "无站点地址") + '</span>' +
-      '<div class="row"><div><label>余额接口策略（手动优先）</label><select class="f-vendor" onchange="preset(' + jsArg(key) + ')">' + vendorOptions() + '</select><div class="tip">中转站建议按实际实现选择：new-api → sub2api → one-api。选定后不会再依赖自动猜测。</div></div>' +
+      '<div class="row"><div><label>余额接口策略（手动优先）</label><select class="f-vendor" onchange="preset(' + jsArg(key) + ')">' + vendorOptions() + '</select><div class="tip f-vendor-tip"></div></div>' +
       '<div><label>站点地址 base_url</label><input class="f-base" placeholder="https://站点域名"></div></div>' +
       '<details><summary>高级：余额接口与 JSON 路径</summary><div class="row"><div><label>endpoint</label><input class="f-ep"></div><div><label>used_endpoint</label><input class="f-usep"></div></div>' +
       '<div class="row"><div><label>balance_path</label><input class="f-bal"></div><div><label>currency_path</label><input class="f-cur"></div><div><label>plan_path</label><input class="f-plan"></div></div>' +
       '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div>' +
-      '<div class="row"><div><label>balance_scale</label><input class="f-bscale" value="1"></div><div><label>limit_scale</label><input class="f-lscale" value="1"></div></div></details></div>';
+      '<div class="row"><div><label>balance_scale</label><input class="f-bscale" value="1"></div><div><label>limit_scale</label><input class="f-lscale" value="1"></div></div></details>' +
+      '<button class="btn primary" style="margin-top:10px" onclick="saveAll()">保存到 CPA</button></div>';
   });
   box.innerHTML = html;
   names.forEach(function(key){
@@ -531,7 +535,7 @@ function renderForms(){
     applyProfile(key);
     var box=document.getElementById("f-"+domKey(key));
     if(!profile.base_url && c.base_url) box.querySelector(".f-base").value=c.base_url;
-    if(!profile.vendor) { box.querySelector(".f-vendor").value=PRESETS[c.provider] ? c.provider : "custom"; preset(key); if(c.base_url) box.querySelector(".f-base").value=c.base_url; }
+    if(!profile.vendor) { box.querySelector(".f-vendor").value=PROVIDER_PRESET[c.provider] || (PRESETS[c.provider] ? c.provider : "custom"); preset(key); if(c.base_url) box.querySelector(".f-base").value=c.base_url; }
     if(draft) applyDraft(key,draft);
   });
 }
@@ -569,6 +573,9 @@ function preset(key){
   box.querySelector(".f-bscale").value = p.bscale || "1";
   box.querySelector(".f-lscale").value = p.lscale || "1";
   box.querySelector(".f-plan").value = p.plan || "";
+  box.querySelector(".f-vendor-tip").textContent = (v === "glm" || v === "zai")
+    ? "仅查询 Coding Plan 配额；普通 /api/paas/v4 API Key 的充值余额无法从此接口读取。"
+    : "中转站按实际实现选择：new-api → sub2api → one-api。手动选择优先于自动探测。";
 }
 function collectConfig(){
   captureFormDrafts();

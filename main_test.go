@@ -836,6 +836,63 @@ func fakeHost(t *testing.T, status int, body string, seen *httpRequest) {
 	t.Cleanup(func() { hostCallMethod = previous })
 }
 
+func TestGLMOldProfileEndpoint(t *testing.T) {
+	var seen httpRequest
+	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":20,"unit":3}]}}`, &seen)
+	storage, _ := json.Marshal(map[string]string{"api_key": "test-key"})
+	profile := config{Vendor: "custom", Endpoint: "https://open.bigmodel.cn/api/paas/v4", CredentialHeader: "Authorization", CredentialPrefix: "Bearer ", CredentialPaths: []string{"api_key"}, Method: "GET"}
+	response, err := fetchQuotaWithProfile(profile, quotaFetchRequest{Provider: "openai-compatible-glm", StorageJSON: storage, Attributes: map[string]string{"base_url": "https://open.bigmodel.cn/api/paas/v4"}})
+	if err != nil || len(response.Groups) != 1 || len(response.Groups[0].Buckets) != 1 {
+		t.Fatalf("old GLM profile response = %#v, error = %v", response, err)
+	}
+	if seen.URL != vendorPresets["glm"].Endpoint || len(seen.Headers["Authorization"]) != 1 || seen.Headers["Authorization"][0] != "test-key" {
+		t.Fatalf("old GLM request = %#v", seen)
+	}
+}
+
+func TestGLMCustomRelayProfileIsPreserved(t *testing.T) {
+	var seen httpRequest
+	fakeHost(t, 200, `{"data":{"balance":12}}`, &seen)
+	storage, _ := json.Marshal(map[string]string{"api_key": "test-key"})
+	profile := config{Vendor: "custom", Endpoint: "https://relay.example.com/balance", BalancePath: "data.balance", CredentialHeader: "Authorization", CredentialPrefix: "Bearer ", CredentialPaths: []string{"api_key"}, Method: "GET"}
+	response, err := fetchQuotaWithProfile(profile, quotaFetchRequest{Provider: "openai-compatible-glm", StorageJSON: storage, Attributes: map[string]string{"base_url": "https://relay.example.com/v1"}})
+	if err != nil || seen.URL != profile.Endpoint || response.Groups[0].Buckets[0].Balance != 12 {
+		t.Fatalf("custom GLM relay response = %#v request = %#v error = %v", response, seen, err)
+	}
+}
+
+func TestGLMCompatibleQuota(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatal(err)
+	}
+	var seen httpRequest
+	fakeHost(t, 200, `{"success":true,"data":{"limits":[{"type":"CREDIT_LIMIT","percentage":25,"unit":3},{"type":"CREDIT_LIMIT","percentage":10,"unit":6}]}}`, &seen)
+	storage, _ := json.Marshal(map[string]string{"api_key": "test-key", "base_url": "https://open.bigmodel.cn/api/paas/v4"})
+	response, err := fetchQuota(quotaFetchRequest{Provider: "openai-compatible-glm", StorageJSON: storage, Attributes: map[string]string{"base_url": "https://open.bigmodel.cn/api/paas/v4"}})
+	if err != nil {
+		t.Fatalf("fetchQuota(glm) error = %v", err)
+	}
+	if seen.URL != "https://open.bigmodel.cn/api/monitor/usage/quota/limit" || len(seen.Headers["Authorization"]) != 1 || seen.Headers["Authorization"][0] != "test-key" {
+		t.Fatalf("GLM request endpoint or auth wrong: %s %#v", seen.URL, seen.Headers["Authorization"])
+	}
+	if len(response.Groups) != 1 || len(response.Groups[0].Buckets) != 2 || response.Groups[0].Buckets[0].RemainingFraction != 0.75 {
+		t.Fatalf("GLM quota = %#v", response)
+	}
+}
+
+func TestGLMQuotaErrors(t *testing.T) {
+	cfg := config{Vendor: "glm", Endpoint: "https://open.bigmodel.cn/api/monitor/usage/quota/limit"}
+	for _, tc := range []struct{ body any; want string }{
+		{map[string]any{"success": false, "msg": "无权查看套餐"}, "无权查看套餐"},
+		{map[string]any{"success": true, "data": map[string]any{"limits": []any{}}}, "普通 /api/paas/v4 API Key"},
+	} {
+		_, err := normalizeQuota(tc.body, nil, false, cfg)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("normalizeQuota(%#v) = %v, want %q", tc.body, err, tc.want)
+		}
+	}
+}
+
 func TestFetchQuotaEndToEnd(t *testing.T) {
 	if err := applyConfig([]byte("enabled: true\nvendor: deepseek\n")); err != nil {
 		t.Fatalf("applyConfig() error = %v", err)

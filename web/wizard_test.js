@@ -114,6 +114,30 @@ test('selected account table ignores unselected accounts and escapes labels', ()
   assert.match(element('selectedRows').innerHTML, /尚未选择账号/);
 });
 
+test('configuration opens above account list and focuses the selected form', () => {
+  const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
+  assert.ok(html.indexOf('id="cfgCard"') < html.indexOf('id="accountPanel"'));
+  const {context, element} = loadWizard();
+  let scrolled = false;
+  element('f-a').scrollIntoView = () => { scrolled = true; };
+  context.renderForms = () => {};
+  context.togglePick('a', true);
+  assert.equal(context.selected.a, true);
+  assert.equal(scrolled, true);
+});
+
+test('GLM quota is described without showing a zero cash balance', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{provider:'openai-compatible-glm',profile_key:'glm-a'}], config:{}};
+  context.displaySel = {'glm-a':true};
+  context.balanceCache['glm-a'] = {ok:true,has_balance:false,balance:0,description:'5 小时额度 剩余 75% · 每周额度 剩余 90%'};
+  context.renderSelectedBalances();
+  assert.match(element('selected-bal-glm-a').innerHTML, /5 小时额度 剩余 75%/);
+  assert.doesNotMatch(element('selected-bal-glm-a').innerHTML, /余额 0/);
+  context.renderSummary();
+  assert.equal(element('statBalance').textContent, '—');
+});
+
 test('manual refresh queries only existing selected accounts and bypasses cached balances', async () => {
   const calls = [];
   const {context, element} = loadWizard({fetch: async url => {
