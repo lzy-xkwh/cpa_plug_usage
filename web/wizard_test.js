@@ -254,7 +254,6 @@ test('manual refresh queries only existing selected accounts and bypasses cached
   assert.equal(button.textContent, '刷新余额');
   assert.match(element('selected-bal-a').innerHTML, /USD 9/);
 });
-
 test('manual refresh reports per-account failure and handles empty selection', async () => {
   const {context, element} = loadWizard({fetch: async () => {
     throw new Error('offline');
@@ -269,4 +268,25 @@ test('manual refresh reports per-account failure and handles empty selection', a
   assert.equal(button.disabled, false);
   assert.equal(element('globalMsg').className, 'err');
   assert.match(element('selected-bal-a').innerHTML, /offline/);
+});
+
+test('usage history range buttons set the expected date bounds', () => {
+  const {context, element} = loadWizard();
+  const today = context.localDay(new Date());
+  context.setHistoryRange('today');
+  assert.equal(element('dailyFrom').value, today);
+  assert.equal(element('dailyTo').value, today);
+
+  context.setHistoryRange('yesterday');
+  const yesterday = context.localDay(new Date(Date.now() - 86400000));
+  assert.equal(element('dailyFrom').value, yesterday);
+  assert.equal(element('dailyTo').value, yesterday);
+
+  context.setHistoryRange('all');
+  assert.equal(element('dailyFrom').value, '');
+  assert.equal(element('dailyTo').value, '');
+
+  context.setHistoryRange('custom');
+  assert.notEqual(element('dailyFrom').value, '');
+  assert.notEqual(element('dailyTo').value, '');
 });

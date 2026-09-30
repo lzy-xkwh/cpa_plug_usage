@@ -125,6 +125,7 @@ type config struct {
 	WindowName          string   `yaml:"window_name" json:"window_name"`
 	// UsageDBPath / DailyQueryHour / DailyQueryMinute 控制服务端 SQLite 历史与每日任务。
 	UsageDBPath      string `yaml:"usage_db_path" json:"usage_db_path"`
+	UsageRetentionDays int  `yaml:"usage_retention_days" json:"usage_retention_days"`
 	DailyQueryHour   int    `yaml:"daily_query_hour" json:"daily_query_hour"`
 	DailyQueryMinute int    `yaml:"daily_query_minute" json:"daily_query_minute"`
 	Profiles map[string]config `yaml:"profiles" json:"profiles"`
@@ -484,6 +485,7 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "reset_path", Type: "string", Description: "可选，响应 JSON 中重置时间所在路径。"},
 				{Name: "window_name", Type: "string", Description: "标准化额度窗口的显示名称。"},
 				{Name: "usage_db_path", Type: "string", Description: "服务端 SQLite 文件路径；默认 api-balance-usage.db。"},
+				{Name: "usage_retention_days", Type: "integer", Description: "快照保留天数，默认 400 天，最大 3650 天。"},
 				{Name: "daily_query_hour", Type: "integer", Description: "每日自动查询的本地小时，默认 3。"},
 				{Name: "daily_query_minute", Type: "integer", Description: "每日自动查询的本地分钟，默认 0。"},
 				{Name: "allow_insecure_http", Type: "boolean", Description: "是否允许 HTTP 接口；仅在服务可信且本地内网时开启。"},
@@ -680,6 +682,12 @@ func normalizeDefaults(next *config) error {
 	}
 	if next.WindowName == "" {
 		next.WindowName = "余额"
+	}
+	if next.UsageRetentionDays <= 0 {
+		next.UsageRetentionDays = 400
+	}
+	if next.UsageRetentionDays > 3650 {
+		return fmt.Errorf("usage_retention_days 不能超过 3650 天")
 	}
 	if next.DailyQueryHour < 0 || next.DailyQueryHour > 23 {
 		return fmt.Errorf("daily_query_hour 必须在 0-23 之间")
@@ -2011,6 +2019,7 @@ func sanitizedPageConfig(cfg config) map[string]any {
 		"providers":            cfg.Providers,
 		"selected_credentials": cfg.SelectedCredentials,
 		"usage_db_path":        usageDBPath(cfg),
+		"usage_retention_days":  cfg.UsageRetentionDays,
 		"daily_query_hour":     cfg.DailyQueryHour,
 		"daily_query_minute":   cfg.DailyQueryMinute,
 		"profiles":             map[string]any{},
@@ -2550,6 +2559,7 @@ var wizardTopLevelKeys = map[string]struct{}{
 	"reset_path":           {},
 	"window_name":          {},
 	"usage_db_path":        {},
+	"usage_retention_days":  {},
 	"daily_query_hour":     {},
 	"daily_query_minute":   {},
 }
@@ -2602,6 +2612,12 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 			var value float64
 			if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 				return nil, errors.New(key + " 必须是正数")
+			}
+			clean[key] = value
+		case "usage_retention_days":
+			var value int
+			if err := json.Unmarshal(raw, &value); err != nil || value <= 0 || value > 3650 {
+				return nil, errors.New("usage_retention_days 必须是 1-3650 之间的整数")
 			}
 			clean[key] = value
 		case "daily_query_hour", "daily_query_minute":

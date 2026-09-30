@@ -19,6 +19,8 @@ h1{font-size:20px;margin:0 0 4px}
 .metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
 .metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
 .filterbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}.filterbar input,.filterbar select{max-width:240px}.filterbar .tip{margin:0}
+.quick-range{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.quick-range .btn{padding:7px 10px;font-size:12px}.quick-range .btn.active{color:var(--ac);border-color:var(--ac);background:var(--soft)}
+.history-date-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.history-date-filter input{max-width:160px}
 .tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:1px solid var(--bd)}.tab{border:0;background:transparent;padding:8px 12px;color:var(--mu);cursor:pointer;font-size:13px;border-bottom:2px solid transparent}.tab.active{color:var(--ac);border-bottom-color:var(--ac);font-weight:600}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.statbox{border:1px solid var(--bd);border-radius:8px;padding:12px}.statbox b{font-size:20px}.statbox span{display:block;color:var(--mu);font-size:12px;margin-top:4px}
 label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
@@ -59,10 +61,10 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
  <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
 </div>
 
-<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
+<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">用量历史</button></div>
 <div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；余额查询失败不会把未知值当作 0。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
-<div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="tip">这里汇总首页已选择账号最近一次成功查询到的当前余额和当前 used，按币种分组并支持按账号、站点筛选；本页不发起查询，日内变化请看“每日快照”。</div><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>当前 used 合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
-<div id="view-daily" style="display:none" class="card"><h2>每日余额 / 配额历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="filterbar"><input id="dailyFrom" type="date" onchange="loadServerHistory()"><input id="dailyTo" type="date" onchange="loadServerHistory()"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
+<div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="tip">这里汇总首页已选择账号最近一次成功查询到的当前余额和当前 used，按币种分组并支持按账号、站点筛选；本页不发起查询，日内变化请看“用量历史”。</div><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>当前 used 合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
+<div id="view-daily" style="display:none" class="card"><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyAccountSelect" onchange="renderDailySnapshots()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、标签、来源或提供方" oninput="renderDailySnapshots()"><select id="dailyProvider" onchange="renderDailySnapshots()"><option value="">全部提供方</option></select><select id="dailySource" onchange="renderDailySnapshots()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空</button><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -327,27 +329,81 @@ function renderSummary(){
   document.getElementById("summaryByCurrency").innerHTML=parts.length?parts.join("<br>"):"暂无当前选择范围内的成功查询结果";
 }
 var serverHistory = null;
+var historyRange = "30d";
+var historyLoading = null;
+var historyRefreshTimer = null;
 function historyDate(id, fallback){
   var el=document.getElementById(id); if(!el) return fallback;
   if(!el.value) el.value=fallback;
   return el.value;
 }
+function setHistoryRange(mode, button){
+  historyRange=mode||"custom";
+  document.querySelectorAll("[data-range]").forEach(function(el){el.classList.toggle("active",el.getAttribute("data-range")===historyRange);});
+  var today=new Date(), from="", to=localDay(today);
+  if(historyRange==="all"){
+    from="1970-01-01";
+    var fromEl=document.getElementById("dailyFrom"),toEl=document.getElementById("dailyTo");
+    if(fromEl)fromEl.value=""; if(toEl)toEl.value="";
+  }else if(historyRange!=="custom"){
+    var days={today:1,yesterday:1,"7d":7,"14d":14,"30d":30}[historyRange]||30;
+    if(historyRange==="yesterday"){
+      from=localDay(new Date(today.getTime()-86400000)); to=from;
+    }else{
+      from=localDay(new Date(today.getTime()-(days-1)*86400000));
+    }
+    var startEl=document.getElementById("dailyFrom"),endEl=document.getElementById("dailyTo");
+    if(startEl)startEl.value=from; if(endEl)endEl.value=to;
+  }else{
+    historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000)));
+    historyDate("dailyTo",localDay());
+  }
+  if(button) loadServerHistory();
+}
+function historyBounds(){
+  var today=localDay();
+  if(historyRange==="all") return {from:"1970-01-01",to:today,label:"全部"};
+  var from=historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000))), to=historyDate("dailyTo",today);
+  return {from:from,to:to,label:historyRange==="custom"?"自定义":historyRange};
+}
 function loadServerHistory(){
-  var from=historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000))), to=historyDate("dailyTo",localDay());
+  if(historyLoading)return historyLoading;
+  var bounds=historyBounds(), from=bounds.from, to=bounds.to;
   var status=document.getElementById("historyStatus"); if(status) status.textContent="正在读取服务器 SQLite 历史…";
-  return fetchTimeout("/v0/resource/plugins/api-balance/usage-history?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to),{},10000)
+  historyLoading=fetchTimeout("/v0/resource/plugins/api-balance/usage-history?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to),{},10000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
-    .then(function(body){serverHistory=Array.isArray(body.items)?body.items:[];if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+from+" 至 "+to+"）";renderDailySnapshots();return serverHistory;})
-    .catch(function(e){serverHistory=null;if(status)status.textContent="服务器历史读取失败："+e.message+"；显示本机兼容快照";renderDailySnapshotsLocal();return [];});
+    .then(function(body){serverHistory=Array.isArray(body.items)?body.items:[];if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+bounds.label+"，"+from+" 至 "+to+"）";renderDailySnapshots();return serverHistory;})
+    .catch(function(e){serverHistory=null;if(status)status.textContent="服务器历史读取失败："+e.message+"；显示本机兼容快照";renderDailySnapshotsLocal();return [];})
+    .then(function(result){historyLoading=null;return result;});
+  return historyLoading;
+}
+function updateHistoryAuto(){
+  if(historyRefreshTimer){clearInterval(historyRefreshTimer);historyRefreshTimer=null;}
+  var seconds=Number((document.getElementById("historyAuto")||{}).value||0);
+  if(seconds>0)historyRefreshTimer=setInterval(function(){if(currentView==="daily")loadServerHistory();},seconds*1000);
+}
+function clearHistoryFilters(){
+  var account=document.getElementById("dailyAccount"),accountSelect=document.getElementById("dailyAccountSelect"),provider=document.getElementById("dailyProvider"),source=document.getElementById("dailySource"),currency=document.getElementById("dailyCurrency");
+  if(account)account.value=""; if(accountSelect)accountSelect.value=""; if(provider)provider.value=""; if(source)source.value=""; if(currency)currency.value="";
+  setHistoryRange("30d"); loadServerHistory();
 }
 function historyAccountText(key){var c=credentialByKey(key);return (accountText(c)+" "+String(key||"")).toLowerCase();}
 function historyNum(v){return v!==undefined&&v!==null&&isFinite(Number(v));}
 function historyAmount(v,c){return historyNum(v)?formatAmount(Number(v),c):"—";}
+function renderHistoryProviderOptions(){
+  var el=document.getElementById("dailyProvider"),accountEl=document.getElementById("dailyAccountSelect");
+  var providers=[],accounts=[];
+  (serverHistory||[]).forEach(function(x){var p=String(x.provider||""),key=String(x.account_key||"");if(p&&providers.indexOf(p)<0)providers.push(p);if(key&&accounts.indexOf(key)<0)accounts.push(key);});
+  providers.sort(); accounts.sort();
+  if(el){var old=el.value;el.innerHTML='<option value="">全部提供方</option>'+providers.map(function(p){return '<option value="'+esc(p)+'">'+esc(p)+'</option>';}).join("");if(providers.indexOf(old)>=0)el.value=old;}
+  if(accountEl){var selected=accountEl.value;accountEl.innerHTML='<option value="">全部账号</option>'+accounts.map(function(key){var c=credentialByKey(key),label=c.label||c.name||key;return '<option value="'+esc(key)+'">'+esc(label)+'</option>';}).join("");if(accounts.indexOf(selected)>=0)accountEl.value=selected;}
+}
 function renderServerHistory(){
-  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
-  var items=(serverHistory||[]).filter(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));return (!q||historyAccountText(x.account_key).indexOf(q)>=0||String(x.provider||"").toLowerCase().indexOf(q)>=0)&&(!cur||c===cur);});
+  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), selectedAccount=((document.getElementById("dailyAccountSelect")||{}).value||"").trim(), provider=((document.getElementById("dailyProvider")||{}).value||"").trim(), source=((document.getElementById("dailySource")||{}).value||"").trim(), cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
+  renderHistoryProviderOptions();
+  var items=(serverHistory||[]).filter(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), searchable=(historyAccountText(x.account_key)+" "+JSON.stringify(x)).toLowerCase();return (!q||searchable.indexOf(q)>=0)&&(!selectedAccount||String(x.account_key||"")===selectedAccount)&&(!provider||String(x.provider||"")===provider)&&(!source||String(x.source||"")===source)&&(!cur||c===cur);});
   var currencies=[]; (serverHistory||[]).forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
-  if(!items.length){box.innerHTML="暂无符合条件的服务器历史。先点击“立即查询全部”，或调整日期范围。";return;}
+  if(!items.length){box.innerHTML="暂无符合条件的服务器历史。先点击“立即查询全部”，或调整时间和筛选条件。";return;}
   var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
   var html="<table><thead><tr><th>日期</th><th>账号 / 供应商</th><th>类型</th><th>首值</th><th>末值</th><th>变化判断</th><th>采样来源</th></tr></thead><tbody>";
   Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="";
