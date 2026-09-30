@@ -62,7 +62,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 <div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">每日快照</button></div>
 <div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；余额查询失败不会把未知值当作 0。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
 <div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="tip">这里汇总首页已选择账号最近一次成功查询到的当前余额和当前 used，按币种分组并支持按账号、站点筛选；本页不发起查询，日内变化请看“每日快照”。</div><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>当前 used 合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
-<div id="view-daily" style="display:none" class="card"><h2>每日余额 / 配额快照</h2><div class="filterbar"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="dailyRows" class="tip">查询成功后，这里会记录本浏览器每个账号每天的首末余额或配额快照。上游未提供历史 API 时，不会伪造历史用量。</div><button class="btn" onclick="clearDailySnapshots()">清除本机快照</button></div>
+<div id="view-daily" style="display:none" class="card"><h2>每日余额 / 配额历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="filterbar"><input id="dailyFrom" type="date" onchange="loadServerHistory()"><input id="dailyTo" type="date" onchange="loadServerHistory()"><input id="dailyAccount" placeholder="按账号或站点筛选" oninput="renderDailySnapshots()"><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -270,7 +270,7 @@ function showView(view, button){
   if (button) button.classList.add("active");
   if (view === "home") renderSelectedBalances();
   if (view === "overview") renderSummary();
-  if (view === "daily") renderDailySnapshots();
+  if (view === "daily") { if (serverHistory === null) loadServerHistory(); else renderDailySnapshots(); }
 }
 function storageGet(key, fallback){
   try { if (window.localStorage) { var raw = localStorage.getItem(key); return raw == null ? fallback : JSON.parse(raw); } } catch(e) {}
@@ -326,6 +326,40 @@ function renderSummary(){
   var parts=keys.map(function(c){var g=byCurrency[c];return esc(c)+"：余额 "+(g.balanceKnown?formatAmount(g.balance,c):"—")+"，已用 "+(g.usedKnown?formatAmount(g.used,c):"—")+"（"+g.count+" 个账号）";});
   document.getElementById("summaryByCurrency").innerHTML=parts.length?parts.join("<br>"):"暂无当前选择范围内的成功查询结果";
 }
+var serverHistory = null;
+function historyDate(id, fallback){
+  var el=document.getElementById(id); if(!el) return fallback;
+  if(!el.value) el.value=fallback;
+  return el.value;
+}
+function loadServerHistory(){
+  var from=historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000))), to=historyDate("dailyTo",localDay());
+  var status=document.getElementById("historyStatus"); if(status) status.textContent="正在读取服务器 SQLite 历史…";
+  return fetchTimeout("/v0/resource/plugins/api-balance/usage-history?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to),{},10000)
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
+    .then(function(body){serverHistory=Array.isArray(body.items)?body.items:[];if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+from+" 至 "+to+"）";renderDailySnapshots();return serverHistory;})
+    .catch(function(e){serverHistory=null;if(status)status.textContent="服务器历史读取失败："+e.message+"；显示本机兼容快照";renderDailySnapshotsLocal();return [];});
+}
+function historyAccountText(key){var c=credentialByKey(key);return (accountText(c)+" "+String(key||"")).toLowerCase();}
+function historyNum(v){return v!==undefined&&v!==null&&isFinite(Number(v));}
+function historyAmount(v,c){return historyNum(v)?formatAmount(Number(v),c):"—";}
+function renderServerHistory(){
+  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
+  var items=(serverHistory||[]).filter(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));return (!q||historyAccountText(x.account_key).indexOf(q)>=0||String(x.provider||"").toLowerCase().indexOf(q)>=0)&&(!cur||c===cur);});
+  var currencies=[]; (serverHistory||[]).forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
+  if(!items.length){box.innerHTML="暂无符合条件的服务器历史。先点击“立即查询全部”，或调整日期范围。";return;}
+  var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
+  var html="<table><thead><tr><th>日期</th><th>账号 / 供应商</th><th>类型</th><th>首值</th><th>末值</th><th>变化判断</th><th>采样来源</th></tr></thead><tbody>";
+  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="";
+    if(g.kind==="quota") { var d=historyNum(a.remaining)&&historyNum(b.remaining)?Number(b.remaining)-Number(a.remaining):null; change=d===null?"无法计算":(d>0?"剩余增加 +"+historyAmount(d,"积分"):d<0?"剩余消耗 "+historyAmount(d,"积分"):"无变化"); extra=g.window||"配额"; }
+    else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,ld=historyNum(a.limit)&&historyNum(b.limit)?Number(b.limit)-Number(a.limit):null,ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ld!==null||ud!==null){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(ld!==null&&ld>0)change.push("总额度增加（可能充值/套餐调整） +"+historyAmount(ld,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
+    html+="<tr><td>"+esc(a.day)+"</td><td><b>"+esc(label)+"</b><div class='tip'>"+esc(name.base_url||"")+"</div></td><td>"+esc(g.kind==="quota"?"配额 · "+extra:"余额 · "+g.currency)+"</td><td>"+(g.kind==="quota"?historyAmount(a.remaining,"积分"):historyAmount(a.balance,g.currency))+"</td><td>"+(g.kind==="quota"?historyAmount(b.remaining,"积分"):historyAmount(b.balance,g.currency))+"</td><td>"+esc(change)+"</td><td>"+esc(a.source||"manual")+" → "+esc(b.source||"manual")+"</td></tr>";
+  });
+  box.innerHTML=html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。</div>";
+}
+function renderDailySnapshotsLocal(){
+  var old=serverHistory; serverHistory=null; renderDailySnapshots(); serverHistory=old;
+}
 function snapshotKey(){ return "api-balance-daily-v2"; }
 function snapshotItems(){ var x=storageGet(snapshotKey(),[]); return Array.isArray(x)?x:[]; }
 function recordSnapshot(key, result){
@@ -370,6 +404,7 @@ function snapshotAccountDetail(x, kind, currency){
   return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前余额 "+esc(balance)+" · "+esc(usedState)+"</div></div>";
 }
 function renderDailySnapshots(){
+  if (serverHistory !== null) { renderServerHistory(); return; }
   var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
   var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
   items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||displayCurrency(x.currency)===cur);});
@@ -575,7 +610,7 @@ function fetchAllBalances(button){
   var names = credentialRows().map(function(c){ return c.key; });
   if (!names.length) { msg("当前没有可查询的账号/站点", ""); return; }
   setBusy(button, true, "查询中…"); msg("正在查询 " + names.length + " 个账号/站点余额…", "");
-  Promise.all(names.map(fetchBalance)).then(function(){ renderProviderRows(); msg("余额查询完成，结果已更新", "ok"); setBusy(button, false); }, function(e){ msg("余额查询失败：" + e.message, "err"); setBusy(button, false); });
+  Promise.all(names.map(fetchBalance)).then(function(){ renderProviderRows(); if(serverHistory !== null) loadServerHistory(); msg("余额查询完成，结果已更新", "ok"); setBusy(button, false); }, function(e){ msg("余额查询失败：" + e.message, "err"); setBusy(button, false); });
 }
 
 function renderForms(){

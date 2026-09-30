@@ -68,6 +68,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -122,9 +123,10 @@ type config struct {
 	PlanPath            string   `yaml:"plan_path" json:"plan_path"`
 	ResetPath           string   `yaml:"reset_path" json:"reset_path"`
 	WindowName          string   `yaml:"window_name" json:"window_name"`
-	// Profiles 多厂商档案：键为 CPA 凭据的 provider 名（小写），
-	// 值为该凭据使用的余额配置；特殊键 default 兜底未匹配的凭据。
-	// 仅支持标量字段；headers/query/credential_paths 使用全局配置。
+	// UsageDBPath / DailyQueryHour / DailyQueryMinute 控制服务端 SQLite 历史与每日任务。
+	UsageDBPath      string `yaml:"usage_db_path" json:"usage_db_path"`
+	DailyQueryHour   int    `yaml:"daily_query_hour" json:"daily_query_hour"`
+	DailyQueryMinute int    `yaml:"daily_query_minute" json:"daily_query_minute"`
 	Profiles map[string]config `yaml:"profiles" json:"profiles"`
 }
 
@@ -373,7 +375,10 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 }
 
 //export cliproxyPluginShutdown
-func cliproxyPluginShutdown() {}
+func cliproxyPluginShutdown() {
+	stopUsageScheduler()
+	closeUsageStore()
+}
 
 func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
@@ -434,6 +439,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 					"path":        "/config-data",
 					"description": "向导页数据源：当前配置与供应商余额支持状态",
 				},
+				{
+					"path":        "/usage-history",
+					"description": "读取服务端 SQLite 中的用量历史",
+				},
 			},
 		}), nil
 	case "management.handle":
@@ -474,6 +483,9 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "plan_path", Type: "string", Description: "可选，响应 JSON 中套餐名称所在路径。"},
 				{Name: "reset_path", Type: "string", Description: "可选，响应 JSON 中重置时间所在路径。"},
 				{Name: "window_name", Type: "string", Description: "标准化额度窗口的显示名称。"},
+				{Name: "usage_db_path", Type: "string", Description: "服务端 SQLite 文件路径；默认 api-balance-usage.db。"},
+				{Name: "daily_query_hour", Type: "integer", Description: "每日自动查询的本地小时，默认 3。"},
+				{Name: "daily_query_minute", Type: "integer", Description: "每日自动查询的本地分钟，默认 0。"},
 				{Name: "allow_insecure_http", Type: "boolean", Description: "是否允许 HTTP 接口；仅在服务可信且本地内网时开启。"},
 				{Name: "profiles", Type: "string", Description: "高级：多厂商档案映射，键为 CPA 凭据的 provider 名，值为一组余额配置；详见 README。仅 YAML 配置可用。"},
 			},
@@ -538,6 +550,11 @@ func applyConfig(raw []byte) error {
 	configMu.Lock()
 	runtimeConfig = next
 	configMu.Unlock()
+	if next.Enabled {
+		startUsageScheduler()
+	} else {
+		stopUsageScheduler()
+	}
 	return nil
 }
 
@@ -663,6 +680,15 @@ func normalizeDefaults(next *config) error {
 	}
 	if next.WindowName == "" {
 		next.WindowName = "余额"
+	}
+	if next.DailyQueryHour < 0 || next.DailyQueryHour > 23 {
+		return fmt.Errorf("daily_query_hour 必须在 0-23 之间")
+	}
+	if next.DailyQueryMinute < 0 || next.DailyQueryMinute > 59 {
+		return fmt.Errorf("daily_query_minute 必须在 0-59 之间")
+	}
+	if next.DailyQueryHour == 0 && next.DailyQueryMinute == 0 {
+		next.DailyQueryHour = 3
 	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
@@ -1845,10 +1871,26 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if provider := firstQuery(req.Query, "balance"); provider != "" {
-		payload, err := json.Marshal(fetchProviderBalance(provider, firstQuery(req.Query, "credential_key")))
+		credentialKey := firstQuery(req.Query, "credential_key")
+		result := fetchProviderBalance(provider, credentialKey)
+		if result.OK {
+			if err := saveProviderSnapshot(provider, credentialKey, result, "manual", time.Now()); err != nil {
+				result.Message = "余额查询成功，但保存 SQLite 快照失败: " + err.Error()
+			}
+		}
+		payload, err := json.Marshal(result)
 		if err != nil {
 			return nil, fmt.Errorf("编码余额结果失败: %w", err)
 		}
+		return okEnvelope(managementJSONResponse(payload)), nil
+	}
+	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/usage-history") {
+		var historyReq usageHistoryRequest
+		if raw := firstQuery(req.Query, "from"); raw != "" { historyReq.From = raw }
+		if raw := firstQuery(req.Query, "to"); raw != "" { historyReq.To = raw }
+		if raw := firstQuery(req.Query, "key"); raw != "" { historyReq.Key = raw }
+		payload, err := marshalUsageHistory(historyReq)
+		if err != nil { return nil, err }
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if saveJSON := firstQuery(req.Query, "save"); saveJSON != "" {
@@ -1968,6 +2010,9 @@ func sanitizedPageConfig(cfg config) map[string]any {
 		"priority":             cfg.Priority,
 		"providers":            cfg.Providers,
 		"selected_credentials": cfg.SelectedCredentials,
+		"usage_db_path":        usageDBPath(cfg),
+		"daily_query_hour":     cfg.DailyQueryHour,
+		"daily_query_minute":   cfg.DailyQueryMinute,
 		"profiles":             map[string]any{},
 	}
 	profiles := map[string]any{}
@@ -2504,6 +2549,9 @@ var wizardTopLevelKeys = map[string]struct{}{
 	"plan_path":            {},
 	"reset_path":           {},
 	"window_name":          {},
+	"usage_db_path":        {},
+	"daily_query_hour":     {},
+	"daily_query_minute":   {},
 }
 
 var wizardProfileKeys = map[string]struct{}{
@@ -2554,6 +2602,18 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 			var value float64
 			if err := json.Unmarshal(raw, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 				return nil, errors.New(key + " 必须是正数")
+			}
+			clean[key] = value
+		case "daily_query_hour", "daily_query_minute":
+			var value int
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, errors.New(key + " 必须是整数")
+			}
+			if key == "daily_query_hour" && (value < 0 || value > 23) {
+				return nil, errors.New("daily_query_hour 必须在 0-23 之间")
+			}
+			if key == "daily_query_minute" && (value < 0 || value > 59) {
+				return nil, errors.New("daily_query_minute 必须在 0-59 之间")
 			}
 			clean[key] = value
 		case "method":
