@@ -34,6 +34,9 @@ jobs:
         with:
           go-version: "1.24.x"
 
+      - name: Prepare Go dependencies
+        run: go mod tidy
+
       - name: Install ARM64 cross compiler
         if: matrix.goarch == 'arm64'
         run: |
