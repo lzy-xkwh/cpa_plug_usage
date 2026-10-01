@@ -1924,21 +1924,18 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/usage-history") {
+		var historyReq usageHistoryRequest
+		historyReq.From = firstQuery(req.Query, "from")
+		historyReq.To = firstQuery(req.Query, "to")
+		historyReq.Key = firstQuery(req.Query, "key")
+		historyReq.Provider = firstQuery(req.Query, "provider")
+		historyReq.Source = firstQuery(req.Query, "source")
+		historyReq.Currency = firstQuery(req.Query, "currency")
 		if req.Method == http.MethodDelete {
-			if err := clearUsageHistory(); err != nil {
+			if err := clearUsageHistory(historyReq); err != nil {
 				return nil, err
 			}
-			return okEnvelope(managementJSONResponse([]byte(`{"ok":true,"message":"服务器用量历史已清空"}`))), nil
-		}
-		var historyReq usageHistoryRequest
-		if raw := firstQuery(req.Query, "from"); raw != "" {
-			historyReq.From = raw
-		}
-		if raw := firstQuery(req.Query, "to"); raw != "" {
-			historyReq.To = raw
-		}
-		if raw := firstQuery(req.Query, "key"); raw != "" {
-			historyReq.Key = raw
+			return okEnvelope(managementJSONResponse([]byte(`{"ok":true,"message":"筛选范围内的服务器用量历史已清空"}`))), nil
 		}
 		payload, err := marshalUsageHistory(historyReq)
 		if err != nil {

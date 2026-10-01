@@ -295,21 +295,6 @@ func pruneUsageStoreLocked(db *sql.DB, retentionDays int, now time.Time) error {
 	return nil
 }
 
-func clearUsageHistory() error {
-	if err := openUsageStore(currentConfig()); err != nil {
-		return err
-	}
-	serverUsageStore.mu.Lock()
-	defer serverUsageStore.mu.Unlock()
-	if serverUsageStore.db == nil {
-		return fmt.Errorf("SQLite 尚未打开")
-	}
-	if _, err := serverUsageStore.db.Exec(`DELETE FROM usage_snapshots`); err != nil {
-		return fmt.Errorf("清空 SQLite 历史失败: %w", err)
-	}
-	return nil
-}
-
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -318,9 +303,65 @@ func boolInt(value bool) int {
 }
 
 type usageHistoryRequest struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Key  string `json:"key"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Key      string `json:"key"`
+	Provider string `json:"provider"`
+	Source   string `json:"source"`
+	Currency string `json:"currency"`
+}
+
+func usageHistoryWhere(req usageHistoryRequest) (string, []any) {
+	from, to := strings.TrimSpace(req.From), strings.TrimSpace(req.To)
+	if from == "" {
+		from = time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+	}
+	if to == "" {
+		to = time.Now().Format("2006-01-02")
+	}
+	where := "day >= ? AND day <= ?"
+	args := []any{from, to}
+	if key := strings.TrimSpace(req.Key); key != "" {
+		where += " AND account_key = ?"
+		args = append(args, key)
+	}
+	if provider := strings.TrimSpace(req.Provider); provider != "" {
+		where += " AND provider = ?"
+		args = append(args, provider)
+	}
+	if source := strings.TrimSpace(req.Source); source != "" {
+		where += " AND source = ?"
+		args = append(args, source)
+	}
+	if currency := strings.ToUpper(strings.TrimSpace(req.Currency)); currency != "" {
+		switch currency {
+		case "CNY":
+			where += " AND (currency = ? OR (currency = '' AND kind = 'balance'))"
+			args = append(args, currency)
+		case "积分":
+			where += " AND kind = 'quota'"
+		default:
+			where += " AND currency = ?"
+			args = append(args, currency)
+		}
+	}
+	return where, args
+}
+
+func clearUsageHistory(req usageHistoryRequest) error {
+	if err := openUsageStore(currentConfig()); err != nil {
+		return err
+	}
+	serverUsageStore.mu.Lock()
+	defer serverUsageStore.mu.Unlock()
+	if serverUsageStore.db == nil {
+		return fmt.Errorf("SQLite 尚未打开")
+	}
+	where, args := usageHistoryWhere(req)
+	if _, err := serverUsageStore.db.Exec("DELETE FROM usage_snapshots WHERE "+where, args...); err != nil {
+		return fmt.Errorf("清空 SQLite 历史失败: %w", err)
+	}
+	return nil
 }
 
 func usageHistoryResponse(req usageHistoryRequest) (map[string]any, error) {
@@ -339,12 +380,8 @@ func usageHistoryResponse(req usageHistoryRequest) (map[string]any, error) {
 	if to == "" {
 		to = time.Now().Format("2006-01-02")
 	}
-	query := `SELECT observed_at,day,account_key,provider,currency,kind,window,balance,used,limit_value,remaining,remaining_fraction,reset_time,has_balance,has_used,has_limit,source FROM usage_snapshots WHERE day >= ? AND day <= ?`
-	args := []any{from, to}
-	if req.Key != "" {
-		query += " AND account_key = ?"
-		args = append(args, req.Key)
-	}
+	where, args := usageHistoryWhere(req)
+	query := `SELECT observed_at,day,account_key,provider,currency,kind,window,balance,used,limit_value,remaining,remaining_fraction,reset_time,has_balance,has_used,has_limit,source FROM usage_snapshots WHERE ` + where
 	query += " ORDER BY observed_at DESC, id DESC LIMIT 5000"
 	rows, err := serverUsageStore.db.Query(query, args...)
 	if err != nil {

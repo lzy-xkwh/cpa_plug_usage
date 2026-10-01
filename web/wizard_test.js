@@ -323,6 +323,29 @@ test('manual refresh reports per-account failure and handles empty selection', a
   assert.match(element('selected-bal-a').innerHTML, /offline/);
 });
 
+test('server history filters build query parameters and expose scoped deletion', () => {
+  const {context, element} = loadWizard();
+  context.historyRange = 'custom';
+  element('dailyFrom').value = '2026-09-01';
+  element('dailyTo').value = '2026-09-07';
+  element('dailyAccountSelect').value = 'account-a';
+  element('dailyProvider').value = 'relay';
+  element('dailySource').value = 'scheduled';
+  element('dailyCurrency').value = 'CNY';
+  const query = context.historyQuery(true);
+  assert.match(query, /from=2026-09-01/);
+  assert.match(query, /to=2026-09-07/);
+  assert.match(query, /key=account-a/);
+  assert.match(query, /provider=relay/);
+  assert.match(query, /source=scheduled/);
+  assert.match(query, /currency=CNY/);
+  const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
+  assert.match(html, /删除当前筛选历史/);
+  assert.match(html, /删除全部服务器历史/);
+  assert.match(html, /clearServerHistory\(true\)/);
+  assert.match(html, /clearServerHistory\(false\)/);
+});
+
 test('usage history range buttons set the expected date bounds', () => {
   const {context, element} = loadWizard();
   const today = context.localDay(new Date());

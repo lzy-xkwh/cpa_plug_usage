@@ -64,7 +64,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 
 <div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('daily',this)">用量历史</button></div>
 <div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；进入页面不会自动查询。可使用每行的“刷新”按钮单独更新失败账号，也可点击上方按钮刷新全部。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th><th style="width:72px">操作</th></tr></thead><tbody id="selectedRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table></div></div>
-<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务默认从本地时间 00:00 起每小时采样一次，覆盖当天；历史默认永久保留，只有点击“删除服务器历史”并确认才会清空。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyAccountSelect" onchange="renderDailySnapshots()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、标签、来源或提供方" oninput="renderDailySnapshots()"><select id="dailyProvider" onchange="renderDailySnapshots()"><option value="">全部提供方</option></select><select id="dailySource" onchange="renderDailySnapshots()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory()">删除服务器历史筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory()">删除服务器历史</button><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
+<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务默认从本地时间 00:00 起每小时采样一次，覆盖当天；历史默认永久保留，只有点击“删除服务器历史”并确认才会清空。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyAccountSelect" onchange="onHistoryServerFilterChanged()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、标签、来源或提供方" oninput="renderDailySnapshots()"><select id="dailyProvider" onchange="onHistoryServerFilterChanged()"><option value="">全部提供方</option></select><select id="dailySource" onchange="onHistoryServerFilterChanged()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(true)">删除当前筛选历史</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(false)">删除全部服务器历史</button><select id="dailyCurrency" onchange="onHistoryServerFilterChanged()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -364,11 +364,25 @@ function historyBounds(){
   var from=historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000))), to=historyDate("dailyTo",today);
   return {from:from,to:to,label:historyRange==="custom"?"自定义":historyRange};
 }
+function historyQuery(includeFilters){
+  var bounds=historyBounds(), params=["from="+encodeURIComponent(bounds.from),"to="+encodeURIComponent(bounds.to)];
+  if(includeFilters){
+    var key=((document.getElementById("dailyAccountSelect")||{}).value||"").trim();
+    var provider=((document.getElementById("dailyProvider")||{}).value||"").trim();
+    var source=((document.getElementById("dailySource")||{}).value||"").trim();
+    var currency=((document.getElementById("dailyCurrency")||{}).value||"").trim();
+    if(key)params.push("key="+encodeURIComponent(key));
+    if(provider)params.push("provider="+encodeURIComponent(provider));
+    if(source)params.push("source="+encodeURIComponent(source));
+    if(currency)params.push("currency="+encodeURIComponent(currency));
+  }
+  return params.join("&");
+}
 function loadServerHistory(){
   if(historyLoading)return historyLoading;
   var bounds=historyBounds(), from=bounds.from, to=bounds.to;
-  var status=document.getElementById("historyStatus"); if(status) status.textContent="正在读取服务器 SQLite 历史…";
-  historyLoading=fetchTimeout("/v0/resource/plugins/api-balance/usage-history?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to),{},10000)
+  var status=document.getElementById("historyStatus"); if(status)status.textContent="正在读取服务器 SQLite 历史…";
+  historyLoading=fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+historyQuery(true),{},10000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
     .then(function(body){serverHistory=Array.isArray(body.items)?body.items:[];if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+bounds.label+"，"+from+" 至 "+to+"）";renderDailySnapshots();return serverHistory;})
     .catch(function(e){serverHistory=null;if(status)status.textContent="服务器历史读取失败："+e.message+"；显示本机兼容快照";renderDailySnapshotsLocal();return [];})
@@ -380,16 +394,20 @@ function updateHistoryAuto(){
   var seconds=Number((document.getElementById("historyAuto")||{}).value||0);
   if(seconds>0)historyRefreshTimer=setInterval(function(){if(currentView==="daily")loadServerHistory();},seconds*1000);
 }
+function onHistoryServerFilterChanged(){ renderDailySnapshots(); if(serverHistory!==null)loadServerHistory(); }
 function clearHistoryFilters(){
   var account=document.getElementById("dailyAccount"),accountSelect=document.getElementById("dailyAccountSelect"),provider=document.getElementById("dailyProvider"),source=document.getElementById("dailySource"),currency=document.getElementById("dailyCurrency");
   if(account)account.value=""; if(accountSelect)accountSelect.value=""; if(provider)provider.value=""; if(source)source.value=""; if(currency)currency.value="";
   setHistoryRange("30d"); loadServerHistory();
 }
-function clearServerHistory(){
-  if(!window.confirm("确定删除服务器上的全部用量历史吗？此操作不可恢复。")) return;
-  fetchTimeout("/v0/resource/plugins/api-balance/usage-history", {method:"DELETE"}, 15000)
+function clearServerHistory(filtered){
+  var title=filtered?"确定删除当前日期和筛选条件内的服务器用量历史吗？此操作不可恢复。":"确定删除服务器上的全部用量历史吗？此操作不可恢复。";
+  if(!window.confirm(title)) return;
+  var query=filtered?historyQuery(true):"from=0000-01-01&to=9999-12-31";
+  fetchTimeout("/v0/resource/plugins/api-balance/usage-history"+(query?"?"+query:""), {method:"DELETE"}, 15000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
-    .then(function(){serverHistory=[];renderDailySnapshots();msg("服务器用量历史已清空","ok");})
+    .then(function(){return loadServerHistory();})
+    .then(function(){msg(filtered?"当前筛选范围的服务器历史已清空":"服务器用量历史已清空","ok");})
     .catch(function(e){msg("删除服务器历史失败："+e.message,"err");});
 }
 

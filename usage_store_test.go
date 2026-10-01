@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,6 +69,28 @@ func TestSaveProviderSnapshotSkipsInvalidAndSameDayDuplicates(t *testing.T) {
 	}
 }
 
+func TestUsageHistoryWhereUsesAllFilters(t *testing.T) {
+	where, args := usageHistoryWhere(usageHistoryRequest{
+		From: "2026-09-01", To: "2026-09-07", Key: "account-a",
+		Provider: "relay", Source: "scheduled", Currency: "CNY",
+	})
+	if !strings.Contains(where, "account_key = ?") || !strings.Contains(where, "provider = ?") || !strings.Contains(where, "source = ?") {
+		t.Fatalf("where clause missing filters: %s", where)
+	}
+	if len(args) != 6 || args[2] != "account-a" || args[3] != "relay" || args[4] != "scheduled" || args[5] != "CNY" {
+		t.Fatalf("unexpected filter args: %#v", args)
+	}
+}
+
+func TestUsageHistoryWhereSupportsAllDateDeleteRange(t *testing.T) {
+	where, args := usageHistoryWhere(usageHistoryRequest{From: "1970-01-01", To: "2026-09-28"})
+	if !strings.HasPrefix(where, "day >= ? AND day <= ?") {
+		t.Fatalf("unexpected date clause: %s", where)
+	}
+	if len(args) != 2 || args[0] != "1970-01-01" || args[1] != "2026-09-28" {
+		t.Fatalf("unexpected date args: %#v", args)
+	}
+}
 func TestUsageStoreRetentionZeroKeepsHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "retention.db")
 	db, err := sql.Open("sqlite3", path)
