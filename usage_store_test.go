@@ -92,8 +92,7 @@ func TestUsageStoreRetentionZeroKeepsHistory(t *testing.T) {
 		t.Fatalf("retention=0 deleted history, count=%d", count)
 	}
 }
-
-
+func TestUsageStoreMigratesFingerprintColumn(t *testing.T) {
 	closeUsageStore()
 	oldConfig := currentConfig()
 	defer func() {
