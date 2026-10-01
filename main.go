@@ -123,12 +123,13 @@ type config struct {
 	PlanPath            string   `yaml:"plan_path" json:"plan_path"`
 	ResetPath           string   `yaml:"reset_path" json:"reset_path"`
 	WindowName          string   `yaml:"window_name" json:"window_name"`
-	// UsageDBPath / DailyQueryHour / DailyQueryMinute 控制服务端 SQLite 历史与每日任务。
-	UsageDBPath      string `yaml:"usage_db_path" json:"usage_db_path"`
-	UsageRetentionDays int  `yaml:"usage_retention_days" json:"usage_retention_days"`
-	DailyQueryHour   int    `yaml:"daily_query_hour" json:"daily_query_hour"`
-	DailyQueryMinute int    `yaml:"daily_query_minute" json:"daily_query_minute"`
-	Profiles map[string]config `yaml:"profiles" json:"profiles"`
+	// UsageDBPath / DailyQuery* 控制服务端 SQLite 历史与全天自动采样。
+	UsageDBPath               string            `yaml:"usage_db_path" json:"usage_db_path"`
+	UsageRetentionDays        int               `yaml:"usage_retention_days" json:"usage_retention_days"`
+	DailyQueryHour            int               `yaml:"daily_query_hour" json:"daily_query_hour"`
+	DailyQueryMinute          int               `yaml:"daily_query_minute" json:"daily_query_minute"`
+	DailyQueryIntervalMinutes int               `yaml:"daily_query_interval_minutes" json:"daily_query_interval_minutes"`
+	Profiles                  map[string]config `yaml:"profiles" json:"profiles"`
 }
 
 // vendorPreset 描述一个内置厂商的余额接口与响应字段路径。
@@ -458,7 +459,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.9",
+			Version:          "0.9.18",
 			Author:           "community",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			ConfigFields: []configField{
@@ -485,9 +486,10 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "reset_path", Type: "string", Description: "可选，响应 JSON 中重置时间所在路径。"},
 				{Name: "window_name", Type: "string", Description: "标准化额度窗口的显示名称。"},
 				{Name: "usage_db_path", Type: "string", Description: "服务端 SQLite 文件路径；默认 api-balance-usage.db。"},
-				{Name: "usage_retention_days", Type: "integer", Description: "快照保留天数，默认 400 天，最大 3650 天。"},
-				{Name: "daily_query_hour", Type: "integer", Description: "每日自动查询的本地小时，默认 3。"},
-				{Name: "daily_query_minute", Type: "integer", Description: "每日自动查询的本地分钟，默认 0。"},
+				{Name: "usage_retention_days", Type: "integer", Description: "快照保留天数；0 表示永久保留（默认），正数表示按天清理，最大 3650 天。"},
+				{Name: "daily_query_hour", Type: "integer", Description: "自动采样起始本地小时，默认 0（午夜）。"},
+				{Name: "daily_query_minute", Type: "integer", Description: "自动采样起始本地分钟，默认 0。"},
+				{Name: "daily_query_interval_minutes", Type: "integer", Description: "全天自动采样间隔分钟，默认 60，范围 1-1440。"},
 				{Name: "allow_insecure_http", Type: "boolean", Description: "是否允许 HTTP 接口；仅在服务可信且本地内网时开启。"},
 				{Name: "profiles", Type: "string", Description: "高级：多厂商档案映射，键为 CPA 凭据的 provider 名，值为一组余额配置；详见 README。仅 YAML 配置可用。"},
 			},
@@ -683,8 +685,8 @@ func normalizeDefaults(next *config) error {
 	if next.WindowName == "" {
 		next.WindowName = "余额"
 	}
-	if next.UsageRetentionDays <= 0 {
-		next.UsageRetentionDays = 400
+	if next.UsageRetentionDays < 0 {
+		return fmt.Errorf("usage_retention_days 不能小于 0，0 表示永久保留")
 	}
 	if next.UsageRetentionDays > 3650 {
 		return fmt.Errorf("usage_retention_days 不能超过 3650 天")
@@ -695,8 +697,11 @@ func normalizeDefaults(next *config) error {
 	if next.DailyQueryMinute < 0 || next.DailyQueryMinute > 59 {
 		return fmt.Errorf("daily_query_minute 必须在 0-59 之间")
 	}
-	if next.DailyQueryHour == 0 && next.DailyQueryMinute == 0 {
-		next.DailyQueryHour = 3
+	if next.DailyQueryIntervalMinutes <= 0 {
+		next.DailyQueryIntervalMinutes = 60
+	}
+	if next.DailyQueryIntervalMinutes > 1440 {
+		return fmt.Errorf("daily_query_interval_minutes 不能超过 1440 分钟")
 	}
 	if next.Method != http.MethodGet && next.Method != http.MethodPost {
 		return fmt.Errorf("method 仅支持 GET 或 POST，当前为 %q", next.Method)
@@ -971,6 +976,32 @@ func setConfigScalar(out *config, key, value string) error {
 		out.ResetPath = value
 	case "window_name":
 		out.WindowName = value
+	case "usage_db_path":
+		out.UsageDBPath = value
+	case "usage_retention_days":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("usage_retention_days 必须是整数")
+		}
+		out.UsageRetentionDays = parsed
+	case "daily_query_hour":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("daily_query_hour 必须是整数")
+		}
+		out.DailyQueryHour = parsed
+	case "daily_query_minute":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("daily_query_minute 必须是整数")
+		}
+		out.DailyQueryMinute = parsed
+	case "daily_query_interval_minutes":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("daily_query_interval_minutes 必须是整数")
+		}
+		out.DailyQueryIntervalMinutes = parsed
 	case "selected_credentials":
 		if strings.TrimSpace(value) == "[]" {
 			out.SelectedCredentials = []string{}
@@ -1893,6 +1924,12 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/usage-history") {
+		if req.Method == http.MethodDelete {
+			if err := clearUsageHistory(); err != nil {
+				return nil, err
+			}
+			return okEnvelope(managementJSONResponse([]byte(`{"ok":true,"message":"服务器用量历史已清空"}`))), nil
+		}
 		var historyReq usageHistoryRequest
 		if raw := firstQuery(req.Query, "from"); raw != "" { historyReq.From = raw }
 		if raw := firstQuery(req.Query, "to"); raw != "" { historyReq.To = raw }
@@ -2018,11 +2055,12 @@ func sanitizedPageConfig(cfg config) map[string]any {
 		"priority":             cfg.Priority,
 		"providers":            cfg.Providers,
 		"selected_credentials": cfg.SelectedCredentials,
-		"usage_db_path":        usageDBPath(cfg),
-		"usage_retention_days":  cfg.UsageRetentionDays,
-		"daily_query_hour":     cfg.DailyQueryHour,
-		"daily_query_minute":   cfg.DailyQueryMinute,
-		"profiles":             map[string]any{},
+		"usage_db_path":               usageDBPath(cfg),
+		"usage_retention_days":        cfg.UsageRetentionDays,
+		"daily_query_hour":            cfg.DailyQueryHour,
+		"daily_query_minute":          cfg.DailyQueryMinute,
+		"daily_query_interval_minutes": cfg.DailyQueryIntervalMinutes,
+		"profiles":                    map[string]any{},
 	}
 	profiles := map[string]any{}
 	for name, p := range cfg.Profiles {
@@ -2561,7 +2599,8 @@ var wizardTopLevelKeys = map[string]struct{}{
 	"usage_db_path":        {},
 	"usage_retention_days":  {},
 	"daily_query_hour":     {},
-	"daily_query_minute":   {},
+	"daily_query_minute":           {},
+	"daily_query_interval_minutes": {},
 }
 
 var wizardProfileKeys = map[string]struct{}{
@@ -2616,11 +2655,11 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 			clean[key] = value
 		case "usage_retention_days":
 			var value int
-			if err := json.Unmarshal(raw, &value); err != nil || value <= 0 || value > 3650 {
-				return nil, errors.New("usage_retention_days 必须是 1-3650 之间的整数")
+			if err := json.Unmarshal(raw, &value); err != nil || value < 0 || value > 3650 {
+				return nil, errors.New("usage_retention_days 必须是 0-3650 之间的整数，0 表示永久保留")
 			}
 			clean[key] = value
-		case "daily_query_hour", "daily_query_minute":
+		case "daily_query_hour", "daily_query_minute", "daily_query_interval_minutes":
 			var value int
 			if err := json.Unmarshal(raw, &value); err != nil {
 				return nil, errors.New(key + " 必须是整数")
@@ -2630,6 +2669,9 @@ func validateWizardConfig(saveJSON string) (map[string]any, error) {
 			}
 			if key == "daily_query_minute" && (value < 0 || value > 59) {
 				return nil, errors.New("daily_query_minute 必须在 0-59 之间")
+			}
+			if key == "daily_query_interval_minutes" && (value < 1 || value > 1440) {
+				return nil, errors.New("daily_query_interval_minutes 必须在 1-1440 之间")
 			}
 			clean[key] = value
 		case "method":

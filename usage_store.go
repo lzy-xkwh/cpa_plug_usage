@@ -286,7 +286,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, observedAtText, day, accountKey, provider,
 
 func pruneUsageStoreLocked(db *sql.DB, retentionDays int, now time.Time) error {
 	if retentionDays <= 0 {
-		retentionDays = 400
+		return nil
 	}
 	cutoff := now.Local().AddDate(0, 0, -retentionDays).Format("2006-01-02")
 	if _, err := db.Exec(`DELETE FROM usage_snapshots WHERE day < ?`, cutoff); err != nil {
@@ -295,7 +295,21 @@ func pruneUsageStoreLocked(db *sql.DB, retentionDays int, now time.Time) error {
 	return nil
 }
 
-func boolInt(value bool) int {
+func clearUsageHistory() error {
+	if err := openUsageStore(currentConfig()); err != nil {
+		return err
+	}
+	serverUsageStore.mu.Lock()
+	defer serverUsageStore.mu.Unlock()
+	if serverUsageStore.db == nil {
+		return fmt.Errorf("SQLite 尚未打开")
+	}
+	if _, err := serverUsageStore.db.Exec(`DELETE FROM usage_snapshots`); err != nil {
+		return fmt.Errorf("清空 SQLite 历史失败: %w", err)
+	}
+	return nil
+}
+
 	if value {
 		return 1
 	}

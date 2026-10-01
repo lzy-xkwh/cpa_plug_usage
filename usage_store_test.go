@@ -68,7 +68,32 @@ func TestSaveProviderSnapshotSkipsInvalidAndSameDayDuplicates(t *testing.T) {
 	}
 }
 
-func TestUsageStoreMigratesFingerprintColumn(t *testing.T) {
+func TestUsageStoreRetentionZeroKeepsHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retention.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE usage_snapshots (day TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO usage_snapshots(day) VALUES (?)`, "2020-01-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pruneUsageStoreLocked(db, 0, time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_snapshots`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("retention=0 deleted history, count=%d", count)
+	}
+}
+
+
 	closeUsageStore()
 	oldConfig := currentConfig()
 	defer func() {

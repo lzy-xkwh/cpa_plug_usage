@@ -23,6 +23,7 @@ h1{font-size:20px;margin:0 0 4px}
 .history-date-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.history-date-filter input{max-width:160px}
 .tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:1px solid var(--bd)}.tab{border:0;background:transparent;padding:8px 12px;color:var(--mu);cursor:pointer;font-size:13px;border-bottom:2px solid transparent}.tab.active{color:var(--ac);border-bottom-color:var(--ac);font-weight:600}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.statbox{border:1px solid var(--bd);border-radius:8px;padding:12px}.statbox b{font-size:20px}.statbox span{display:block;color:var(--mu);font-size:12px;margin-top:4px}
+.history-summary{margin:0 0 14px;padding:12px 0 14px;border-bottom:1px solid var(--bd)}.history-summary-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.history-summary-head b{font-size:15px}.history-summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px}.history-metric{min-width:0;padding:10px;border:1px solid var(--bd);border-radius:8px;background:#fff}.history-metric .value{font-size:18px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}.history-metric .label{font-size:12px;color:var(--mu);margin-top:4px}.history-metric.recharge .value{color:var(--warn)}.history-metric.usage .value{color:var(--ac)}.history-breakdown{margin-top:10px;line-height:1.7}
 label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
 input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
 .row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
@@ -44,7 +45,7 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 .tip{font-size:12px;color:var(--mu);margin-top:6px}
 #msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
 .btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
-@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}}
+@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}.history-summary-grid{grid-template-columns:repeat(2,1fr)}.history-summary-head{display:block}.history-summary-head .tip{margin-top:4px}}
 
 </style>
 </head>
@@ -61,10 +62,9 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
  <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
 </div>
 
-<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('overview',this)">总览统计</button><button class="tab" onclick="showView('daily',this)">用量历史</button></div>
-<div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；余额查询失败不会把未知值当作 0。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
-<div id="view-overview" style="display:none" class="card"><h2>总览统计</h2><div class="tip">这里汇总首页已选择账号最近一次成功查询到的当前余额和当前 used，按币种分组并支持按账号、站点筛选；本页不发起查询，日内变化请看“用量历史”。</div><div class="filterbar"><input id="summaryAccount" placeholder="按账号、站点筛选" oninput="renderSummary()"><select id="summaryCurrency" onchange="renderSummary()"><option value="">全部币种</option></select></div><div class="stats-grid"><div class="statbox"><b id="statSelected">0</b><span>已选择显示</span></div><div class="statbox"><b id="statReady">0</b><span>可查询账号</span></div><div class="statbox"><b id="statBalance">—</b><span>余额合计</span></div><div class="statbox"><b id="statUsed">—</b><span>当前 used 合计</span></div></div><div id="summaryByCurrency" class="tip"></div><div class="tip">合计只包含当前选择范围和币种中明确的数值；未知、失败和不同币种不会被当作 0。</div></div>
-<div id="view-daily" style="display:none" class="card"><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyAccountSelect" onchange="renderDailySnapshots()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、标签、来源或提供方" oninput="renderDailySnapshots()"><select id="dailyProvider" onchange="renderDailySnapshots()"><option value="">全部提供方</option></select><select id="dailySource" onchange="renderDailySnapshots()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空</button><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
+<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('daily',this)">用量历史</button></div>
+<div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；进入页面不会自动查询。可使用每行的“刷新”按钮单独更新失败账号，也可点击上方按钮刷新全部。</div><div class="table-scroll"><table><thead><tr><th>供应商 / 账号</th><th>站点地址</th><th>余额 / 用量</th><th style="width:72px">操作</th></tr></thead><tbody id="selectedRows"><tr><td colspan="4" class="tip">加载中…</td></tr></tbody></table></div></div>
+<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务默认从本地时间 00:00 起每小时采样一次，覆盖当天；历史默认永久保留，只有点击“删除服务器历史”并确认才会清空。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyAccountSelect" onchange="renderDailySnapshots()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、标签、来源或提供方" oninput="renderDailySnapshots()"><select id="dailyProvider" onchange="renderDailySnapshots()"><option value="">全部提供方</option></select><select id="dailySource" onchange="renderDailySnapshots()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory()">删除服务器历史筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory()">删除服务器历史</button><select id="dailyCurrency" onchange="renderDailySnapshots()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -264,14 +264,12 @@ function loadError(text){
 function showView(view, button){
   currentView = view;
   document.getElementById("view-home").style.display = view === "home" ? "block" : "none";
-  document.getElementById("view-overview").style.display = view === "overview" ? "block" : "none";
   document.getElementById("view-daily").style.display = view === "daily" ? "block" : "none";
   document.getElementById("accountPanel").style.display = view === "accounts" ? "block" : "none";
   document.getElementById("cfgCard").style.display = view === "accounts" && Object.keys(selected).length ? "block" : "none";
   document.querySelectorAll(".tab").forEach(function(b){ b.classList.remove("active"); });
   if (button) button.classList.add("active");
   if (view === "home") renderSelectedBalances();
-  if (view === "overview") renderSummary();
   if (view === "daily") { if (serverHistory === null) loadServerHistory(); else renderDailySnapshots(); }
 }
 function storageGet(key, fallback){
@@ -387,6 +385,14 @@ function clearHistoryFilters(){
   if(account)account.value=""; if(accountSelect)accountSelect.value=""; if(provider)provider.value=""; if(source)source.value=""; if(currency)currency.value="";
   setHistoryRange("30d"); loadServerHistory();
 }
+function clearServerHistory(){
+  if(!window.confirm("确定删除服务器上的全部用量历史吗？此操作不可恢复。")) return;
+  fetchTimeout("/v0/resource/plugins/api-balance/usage-history", {method:"DELETE"}, 15000)
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
+    .then(function(){serverHistory=[];renderDailySnapshots();msg("服务器用量历史已清空","ok");})
+    .catch(function(e){msg("删除服务器历史失败："+e.message,"err");});
+}
+
 function historyAccountText(key){var c=credentialByKey(key);return (accountText(c)+" "+String(key||"")).toLowerCase();}
 function historyNum(v){return v!==undefined&&v!==null&&isFinite(Number(v));}
 function historyAmount(v,c){return historyNum(v)?formatAmount(Number(v),c):"—";}
@@ -398,10 +404,94 @@ function renderHistoryProviderOptions(){
   if(el){var old=el.value;el.innerHTML='<option value="">全部提供方</option>'+providers.map(function(p){return '<option value="'+esc(p)+'">'+esc(p)+'</option>';}).join("");if(providers.indexOf(old)>=0)el.value=old;}
   if(accountEl){var selected=accountEl.value;accountEl.innerHTML='<option value="">全部账号</option>'+accounts.map(function(key){var c=credentialByKey(key),label=c.label||c.name||key;return '<option value="'+esc(key)+'">'+esc(label)+'</option>';}).join("");if(accounts.indexOf(selected)>=0)accountEl.value=selected;}
 }
+function historyFilteredItems(){
+  var q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase();
+  var selectedAccount=((document.getElementById("dailyAccountSelect")||{}).value||"").trim();
+  var provider=((document.getElementById("dailyProvider")||{}).value||"").trim();
+  var source=((document.getElementById("dailySource")||{}).value||"").trim();
+  var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
+  return (serverHistory||[]).filter(function(x){
+    var c=displayCurrency(x.currency||(x.kind==="quota"?"积分":""));
+    var searchable=(historyAccountText(x.account_key)+" "+JSON.stringify(x)).toLowerCase();
+    return (!q||searchable.indexOf(q)>=0)&&(!selectedAccount||String(x.account_key||"")===selectedAccount)&&(!provider||String(x.provider||"")===provider)&&(!source||String(x.source||"")===source)&&(!cur||c===cur);
+  });
+}
+function historySummaryNumber(value, known, currencies){
+  if(!known) return "—";
+  if(currencies.length===1) return historyAmount(value,currencies[0]);
+  return currencies.length ? "多币种" : "—";
+}
+function renderHistorySummary(){
+  var items=historyFilteredItems(), bounds=historyBounds(), groups={}, cash={}, quota={}, accounts={};
+  items.forEach(function(x){
+    var kind=x.kind||"balance", currency=displayCurrency(x.currency||(kind==="quota"?"积分":"")), window=kind==="quota"?(x.window||"配额"):"余额";
+    var key=[x.account_key,kind,currency,window].join("\0"), g=groups[key]||(groups[key]={items:[],kind:kind,currency:currency,window:window,account:x.account_key});
+    g.items.push(x); accounts[x.account_key]=true;
+  });
+  var cashCurrencies=[], quotaWindows={};
+  Object.keys(groups).forEach(function(key){
+    var g=groups[key], rows=g.items.slice().sort(function(a,b){return String(a.observed_at).localeCompare(String(b.observed_at));});
+    if(!rows.length) return;
+    if(g.kind==="quota"){
+      var q=quota[g.window]||(quota[g.window]={consumed:0,consumedKnown:false,current:0,currentKnown:true,accounts:{}});
+      q.accounts[g.account]=true;
+      var last=rows[rows.length-1];
+      if(historyNum(last.remaining)) q.current+=Number(last.remaining); else q.currentKnown=false;
+      for(var qi=1;qi<rows.length;qi++){
+        if(historyNum(rows[qi-1].remaining)&&historyNum(rows[qi].remaining)){
+          var used=Number(rows[qi-1].remaining)-Number(rows[qi].remaining);
+          if(used>=0){q.consumed+=used;q.consumedKnown=true;}
+        }
+      }
+      quotaWindows[g.window]=true;
+      return;
+    }
+    var c=cash[g.currency]||(cash[g.currency]={current:0,currentKnown:true,hasCurrent:false,usage:0,usageKnown:false,recharge:0,rechargeKnown:false,balanceChange:0,balanceChangeKnown:false,accounts:{}});
+    if(cashCurrencies.indexOf(g.currency)<0) cashCurrencies.push(g.currency);
+    c.accounts[g.account]=true;
+    var first=rows[0], latest=rows[rows.length-1];
+    if(historyNum(latest.balance)){c.current+=Number(latest.balance);c.hasCurrent=true;} else c.currentKnown=false;
+    if(historyNum(first.balance)&&historyNum(latest.balance)){c.balanceChange+=Number(latest.balance)-Number(first.balance);c.balanceChangeKnown=true;}
+    for(var i=1;i<rows.length;i++){
+      var previous=rows[i-1], current=rows[i];
+      if(historyNum(previous.used)&&historyNum(current.used)){
+        var usage=Number(current.used)-Number(previous.used);
+        if(usage>=0){c.usage+=usage;c.usageKnown=true;}
+      }
+      if(historyNum(previous.limit)&&historyNum(current.limit)){
+        var added=Number(current.limit)-Number(previous.limit);
+        if(added>0){c.recharge+=added;c.rechargeKnown=true;}
+      }
+    }
+  });
+  var usage=0,usageKnown=false,recharge=0,rechargeKnown=false,balanceChange=0,balanceChangeKnown=false;
+  Object.keys(cash).forEach(function(currency){var c=cash[currency];if(c.usageKnown){usage+=c.usage;usageKnown=true;}if(c.rechargeKnown){recharge+=c.recharge;rechargeKnown=true;}if(c.balanceChangeKnown){balanceChange+=c.balanceChange;balanceChangeKnown=true;}});
+  var quotaUsed=0,quotaUsedKnown=false;
+  Object.keys(quota).forEach(function(window){if(quota[window].consumedKnown){quotaUsed+=quota[window].consumed;quotaUsedKnown=true;}});
+  var range=document.getElementById("historySummaryRange");
+  if(range) range.textContent=(bounds.label||"当前范围")+" · "+bounds.from+" 至 "+bounds.to+" · "+items.length+" 条采样 / "+Object.keys(accounts).length+" 个账号";
+  var usageEl=document.getElementById("historyUsage"), rechargeEl=document.getElementById("historyRecharge"), changeEl=document.getElementById("historyBalanceChange"), quotaEl=document.getElementById("historyQuotaUsed"), samplesEl=document.getElementById("historySamples");
+  if(usageEl) usageEl.textContent=historySummaryNumber(usage,usageKnown,cashCurrencies);
+  if(rechargeEl) rechargeEl.textContent=historySummaryNumber(recharge,rechargeKnown,cashCurrencies);
+  if(changeEl) changeEl.textContent=historySummaryNumber(balanceChange,balanceChangeKnown,cashCurrencies);
+  if(quotaEl) quotaEl.textContent=quotaUsedKnown?historyAmount(quotaUsed,"积分"):"—";
+  if(samplesEl) samplesEl.textContent=items.length+" / "+Object.keys(accounts).length;
+  var lines=[];
+  cashCurrencies.sort().forEach(function(currency){
+    var c=cash[currency], accountCount=Object.keys(c.accounts).length;
+    lines.push("<b>"+esc(currency)+" 现金（"+accountCount+" 个账号）</b>：当前余额 "+esc(c.hasCurrent&&c.currentKnown?historyAmount(c.current,currency):"—")+" · 用量增加 "+esc(c.usageKnown?historyAmount(c.usage,currency):"—")+" · 总额度增加 "+esc(c.rechargeKnown?historyAmount(c.recharge,currency):"—")+" · 余额变化 "+esc(c.balanceChangeKnown?historyAmount(c.balanceChange,currency):"—"));
+  });
+  Object.keys(quota).sort().forEach(function(window){
+    var q=quota[window];
+    lines.push("<b>积分 / "+esc(window)+"（"+Object.keys(q.accounts).length+" 个账号）</b>：配额消耗 "+esc(q.consumedKnown?historyAmount(q.consumed,"积分"):"—")+" · 当前剩余 "+esc(q.currentKnown?historyAmount(q.current,"积分"):"—"));
+  });
+  var box=document.getElementById("historySummaryBreakdown");
+  if(box) box.innerHTML=lines.length?lines.join("<br>"):"当前范围没有符合筛选条件的有效历史采样。用量需要至少两次有效采样；总额度增加会标注为可能充值/套餐调整，不代表插件执行了充值。";
+}
 function renderServerHistory(){
-  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), selectedAccount=((document.getElementById("dailyAccountSelect")||{}).value||"").trim(), provider=((document.getElementById("dailyProvider")||{}).value||"").trim(), source=((document.getElementById("dailySource")||{}).value||"").trim(), cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
+  var box=document.getElementById("dailyRows");
+  var items=historyFilteredItems();
   renderHistoryProviderOptions();
-  var items=(serverHistory||[]).filter(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), searchable=(historyAccountText(x.account_key)+" "+JSON.stringify(x)).toLowerCase();return (!q||searchable.indexOf(q)>=0)&&(!selectedAccount||String(x.account_key||"")===selectedAccount)&&(!provider||String(x.provider||"")===provider)&&(!source||String(x.source||"")===source)&&(!cur||c===cur);});
   var currencies=[]; (serverHistory||[]).forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
   if(!items.length){box.innerHTML="暂无符合条件的服务器历史。先点击“立即查询全部”，或调整时间和筛选条件。";return;}
   var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
@@ -459,8 +549,16 @@ function snapshotAccountDetail(x, kind, currency){
   var delta=snapshotUsedDelta(x), usedState=delta!==null?"used 增量 "+formatAmount(delta,currency):(x.firstAt===x.lastAt?"仅一次采样，无法计算 used 增量":(knownNumber(x.firstUsed)&&knownNumber(x.lastUsed)?"used 发生重置，无法计算":"上游未提供 used，无法计算"));
   return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前余额 "+esc(balance)+" · "+esc(usedState)+"</div></div>";
 }
+function resetHistorySummary(message){
+  var range=document.getElementById("historySummaryRange"), breakdown=document.getElementById("historySummaryBreakdown");
+  if(range) range.textContent="服务器历史未加载";
+  ["historyUsage","historyRecharge","historyBalanceChange","historyQuotaUsed"].forEach(function(id){var el=document.getElementById(id);if(el)el.textContent="—";});
+  var samples=document.getElementById("historySamples"); if(samples)samples.textContent="0";
+  if(breakdown)breakdown.textContent=message||"周期总览需要服务器 SQLite 历史数据。";
+}
 function renderDailySnapshots(){
-  if (serverHistory !== null) { renderServerHistory(); return; }
+  if (serverHistory !== null) { renderHistorySummary(); renderServerHistory(); return; }
+  resetHistorySummary("服务器历史读取失败，当前显示本机兼容快照；周期总览需要服务器 SQLite 历史数据。");
   var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
   var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
   items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||displayCurrency(x.currency)===cur);});
@@ -511,11 +609,10 @@ function applyData(d){
 function restoreCachedData(){
   var cached=storageGet("api-balance-config-v1", null);
   if (!cached || !Array.isArray(cached.credentials)) {
-    document.getElementById("selectedRows").innerHTML='<tr><td colspan="3" class="tip">暂无账号配置缓存，请到“账号配置”手动刷新</td></tr>';
+    document.getElementById("selectedRows").innerHTML='<tr><td colspan="4" class="tip">暂无账号配置缓存，请到“账号配置”手动刷新</td></tr>';
     return Promise.resolve([]);
   }
   applyData(cached);
-  if (currentView === "home") return fetchSelectedBalances();
   return Promise.resolve([]);
 }
 function refreshAccountConfig(button){ return loadData(button); }
@@ -529,7 +626,6 @@ function loadData(button){
   }).then(function(d){
     if (!d) return;
     applyData(d);
-    if (currentView === "home") fetchSelectedBalances();
     msg("供应商列表已刷新", "ok");
   }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); })
     .then(function(){ setBusy(button, false); });
@@ -606,8 +702,9 @@ function renderSelectedBalances(){
   var list=credentialRows().filter(function(c){ return displaySel[c.key]; });
   var rows=document.getElementById("selectedRows");
   rows.innerHTML=list.length?list.map(function(c){
-    return '<tr><td><b>'+esc(c.provider)+'</b><div class="tip">'+esc(c.label||c.name||"账号")+'</div></td><td>'+esc(c.base_url||"—")+'</td><td id="selected-bal-'+domKey(c.key)+'" class="tip">—</td></tr>';
-  }).join(""):'<tr><td colspan="3" class="tip">尚未选择账号，请在下方勾选「显示」。</td></tr>';
+    var id=domKey(c.key);
+    return '<tr><td><b>'+esc(c.provider)+'</b><div class="tip">'+esc(c.label||c.name||"账号")+'</div></td><td>'+esc(c.base_url||"—")+'</td><td id="selected-bal-'+id+'" class="tip">—</td><td><button class="btn" type="button" title="只刷新此账号余额" aria-label="刷新 '+esc(c.label||c.name||c.provider||"账号")+'" onclick="fetchSingleBalance('+jsArg(c.key)+',this)">刷新</button></td></tr>';
+  }).join(""):'<tr><td colspan="4" class="tip">尚未选择账号，请在下方勾选「显示」。</td></tr>';
   list.forEach(function(c){ if(balanceCache[c.key]) renderBalanceResult(c.key,balanceCache[c.key]); });
 }
 
@@ -619,7 +716,6 @@ function togglePick(key,on){
 function toggleDisplay(key,on){
   if(on) displaySel[key]=true; else delete displaySel[key]; storageSet("api-balance-display-v1",Object.keys(displaySel));
   renderSelectedBalances();
-  if(document.getElementById("view-overview").style.display!=="none") renderSummary();
 }
 function balanceCells(key){ return ["bal-","selected-bal-"].map(function(prefix){return document.getElementById(prefix+domKey(key));}).filter(Boolean); }
 function credentialByKey(key){ return credentialRows().filter(function(c){ return c.key === key; })[0] || {}; }
@@ -646,9 +742,19 @@ function fetchBalance(key){
   if(inFlight[key]) return inFlight[key]; var c=credentialByKey(key);
   inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{},30000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(res){return {httpOK:r.ok,body:res};});})
-    .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;recordSnapshot(key,res);}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
-    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);if(document.getElementById("view-overview").style.display!=="none")renderSummary();return res;})
+    .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;recordSnapshot(key,res);}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
+    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
     .then(function(res){delete inFlight[key];return res;}); return inFlight[key];
+}
+function fetchSingleBalance(key, button){
+  if(button) setBusy(button, true, "查询中…");
+  return fetchBalance(key).then(function(res){
+    if(button) setBusy(button, false);
+    return res;
+  }, function(error){
+    if(button) setBusy(button, false);
+    throw error;
+  });
 }
 function fetchSelectedBalances(button){
   var names=credentialRows().filter(function(c){return displaySel[c.key];}).map(function(c){return c.key;});

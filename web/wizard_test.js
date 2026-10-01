@@ -206,6 +206,59 @@ test('selected account table ignores unselected accounts and escapes labels', ()
   assert.match(element('selectedRows').innerHTML, /尚未选择账号/);
 });
 
+test('selected balance page does not auto-refresh on entry', () => {
+  let calls = 0;
+  loadWizard({fetch: async () => { calls++; throw new Error('unexpected automatic query'); }});
+  assert.equal(calls, 0);
+});
+
+test('selected account refresh queries only the clicked account', async () => {
+  const calls = [];
+  const {context, element} = loadWizard({fetch: async url => {
+    calls.push(url);
+    return {ok:true, json:async () => ({ok:true, balance:9, currency:'USD'})};
+  }});
+  context.DATA = {providers:[], credentials:[
+    {provider:'deepseek', profile_key:'a', label:'Account A'},
+    {provider:'moonshot', profile_key:'b', label:'Account B'}
+  ], config:{}};
+  context.displaySel = {a:true, b:true};
+  context.renderSelectedBalances();
+  assert.match(element('selectedRows').innerHTML, /fetchSingleBalance/);
+  const button = element('selectedRefreshButton');
+  button.textContent = '刷新';
+  const result = await context.fetchSingleBalance('a', button);
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /credential_key=a/);
+  assert.equal(context.balanceCache.a.balance, 9);
+  assert.equal(context.balanceCache.b, undefined);
+  assert.equal(button.disabled, false);
+});
+
+
+test('history summary calculates usage, possible recharge, balance change, and quota consumption', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:100,limit:100,balance:10},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:130,limit:120,balance:7},
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:150,limit:120,balance:5},
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'quota',provider:'glm',currency:'积分',kind:'quota',window:'5 小时',remaining:100},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'quota',provider:'glm',currency:'积分',kind:'quota',window:'5 小时',remaining:70}
+  ];
+  context.historyRange = 'today';
+  element('dailyFrom').value = '2026-09-28';
+  element('dailyTo').value = '2026-09-28';
+  context.renderHistorySummary();
+  assert.equal(element('historyUsage').textContent, 'CNY 50');
+  assert.equal(element('historyRecharge').textContent, 'CNY 20');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY -5');
+  assert.equal(element('historyQuotaUsed').textContent, '积分 30');
+  assert.match(element('historySummaryBreakdown').innerHTML, /总额度增加 CNY 20/);
+  assert.match(element('historySummaryBreakdown').innerHTML, /配额消耗 积分 30/);
+});
+
+
 test('configuration opens above account list and focuses the selected form', () => {
   const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
   assert.ok(html.indexOf('id="cfgCard"') < html.indexOf('id="accountPanel"'));

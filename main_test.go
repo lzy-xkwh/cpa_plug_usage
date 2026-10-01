@@ -57,6 +57,11 @@ credential_paths:
   - api_key
 balance_path: data.balance
 limit_path: data.limit
+usage_db_path: "/CLIProxyAPI/plugins/usage/api-balance-usage.db"
+usage_retention_days: 730
+daily_query_hour: 4
+daily_query_minute: 15
+daily_query_interval_minutes: 30
 `), &got)
 	if err != nil {
 		t.Fatalf("decodeConfig() error = %v", err)
@@ -69,6 +74,12 @@ limit_path: data.limit
 	}
 	if len(got.CredentialPaths) != 2 || got.CredentialPaths[1] != "api_key" {
 		t.Fatalf("decoded credential paths = %#v", got.CredentialPaths)
+	}
+	if got.UsageDBPath != "/CLIProxyAPI/plugins/usage/api-balance-usage.db" {
+		t.Fatalf("decoded usage_db_path = %q", got.UsageDBPath)
+	}
+	if got.UsageRetentionDays != 730 || got.DailyQueryHour != 4 || got.DailyQueryMinute != 15 || got.DailyQueryIntervalMinutes != 30 {
+		t.Fatalf("decoded usage schedule = retention %d, hour %d, minute %d, interval %d", got.UsageRetentionDays, got.DailyQueryHour, got.DailyQueryMinute, got.DailyQueryIntervalMinutes)
 	}
 }
 
@@ -514,6 +525,22 @@ func TestAutoDetectMissingBaseURLGuidance(t *testing.T) {
 	_, _, err := autoDetectProfile(cfg, quotaFetchRequest{Provider: "some-relay"})
 	if err == nil || !strings.Contains(err.Error(), "profiles") {
 		t.Fatalf("autoDetectProfile() error = %v, want guidance mentioning profiles", err)
+	}
+}
+
+func TestPermanentRetentionAndSamplingIntervalConfig(t *testing.T) {
+	if err := applyConfig([]byte("usage_retention_days: 0\ndaily_query_hour: 0\ndaily_query_minute: 0\ndaily_query_interval_minutes: 60\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	cfg := currentConfig()
+	if cfg.UsageRetentionDays != 0 || cfg.DailyQueryHour != 0 || cfg.DailyQueryMinute != 0 || cfg.DailyQueryIntervalMinutes != 60 {
+		t.Fatalf("config = %#v, want permanent retention and hourly sampling", cfg)
+	}
+	if err := applyConfig([]byte("usage_retention_days: -1\n")); err == nil {
+		t.Fatal("negative usage_retention_days should be rejected")
+	}
+	if err := applyConfig([]byte("daily_query_interval_minutes: 1441\n")); err == nil {
+		t.Fatal("sampling interval above 1440 minutes should be rejected")
 	}
 }
 
