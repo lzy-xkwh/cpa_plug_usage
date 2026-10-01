@@ -7,7 +7,7 @@
       "description": "按账号/站点独立查询余额与用量：支持 DeepSeek、Kimi、OpenRouter、one-api / New API / sub2api 系站点；同一 provider 的多站点可分别配置，显示选择可持久化，并提供总览统计与服务器 SQLite 每日历史。",
       "author": "lzy-xkwh",
       "repository": "https://github.com/lzy-xkwh/cpa_plug_usage",
-      "version": "0.9.17",
+      "version": "0.9.18",
       "homepage": "https://github.com/lzy-xkwh/cpa_plug_usage",
       "license": "MIT",
       "tags": [
@@ -27,14 +27,14 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.17/api-balance_0.9.17_linux_amd64.zip",
-            "sha256": "5b2d97a3ee7ecf3b85fdf42bdb7e9547e24e556fb63fe262b9bb26b049ff4a13"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.18/api-balance_0.9.18_linux_amd64.zip",
+            "sha256": "3dea24b54c17f9c53d73834b4450b0ee679f9ef003cfc5a93b1e90db0aafbec9"
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.17/api-balance_0.9.17_linux_arm64.zip",
-            "sha256": "3fc8c0b900692d8953c3c4f03e3f646d328366010372bc0cef2de3fc29b7adde"
+            "url": "https://github.com/lzy-xkwh/cpa_plug_usage/releases/download/v0.9.18/api-balance_0.9.18_linux_arm64.zip",
+            "sha256": "bbab2a6949fb9160dd8a1799a4a935adde87599d8e5833bbe90881bacdfc1d1d"
           }
         ]
       },
