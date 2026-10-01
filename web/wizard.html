@@ -406,8 +406,16 @@ function historySummaryNumber(value, known, currencies){
   if(currencies.length===1) return historyAmount(value,currencies[0]);
   return currencies.length ? "多币种" : "—";
 }
+function historyRechargeDelta(previous,current){
+  if(!historyNum(previous&&previous.limit)||!historyNum(current&&current.limit))return {value:null,suspicious:false};
+  var added=Number(current.limit)-Number(previous.limit);
+  if(added<=0)return {value:0,suspicious:false};
+  var baseline=Math.max(Math.abs(Number(previous.limit)),Math.abs(Number(current.balance)||0));
+  var suspicious=added>1000000&&added>Math.max(100,baseline*100);
+  return {value:suspicious?null:added,suspicious:suspicious};
+}
 function renderHistorySummary(){
-  var items=historyFilteredItems(), bounds=historyBounds(), groups={}, cash={}, quota={}, accounts={};
+  var items=historyFilteredItems(), bounds=historyBounds(), groups={}, cash={}, quota={}, accounts={}, suspiciousRechargeCount=0;
   items.forEach(function(x){
     var kind=x.kind||"balance", currency=displayCurrency(x.currency||(kind==="quota"?"积分":"")), window=kind==="quota"?(x.window||"配额"):"余额";
     var key=[x.account_key,kind,currency,window].join("\0"), g=groups[key]||(groups[key]={items:[],kind:kind,currency:currency,window:window,account:x.account_key});
@@ -444,8 +452,9 @@ function renderHistorySummary(){
         if(usage>=0){c.usage+=usage;c.usageKnown=true;}
       }
       if(historyNum(previous.limit)&&historyNum(current.limit)){
-        var added=Number(current.limit)-Number(previous.limit);
-        if(added>0){c.recharge+=added;c.rechargeKnown=true;}
+        var recharge=historyRechargeDelta(previous,current);
+        if(recharge.suspicious){suspiciousRechargeCount++;c.rechargeKnown=true;}
+        else if(recharge.value>0){c.recharge+=recharge.value;c.rechargeKnown=true;}
       }
     }
   });
@@ -471,7 +480,7 @@ function renderHistorySummary(){
     lines.push("<b>积分 / "+esc(window)+"（"+Object.keys(q.accounts).length+" 个账号）</b>：配额消耗 "+esc(q.consumedKnown?historyAmount(q.consumed,"积分"):"—")+" · 当前剩余 "+esc(q.currentKnown?historyAmount(q.current,"积分"):"—"));
   });
   var box=document.getElementById("historySummaryBreakdown");
-  if(box) box.innerHTML=lines.length?lines.join("<br>"):"当前范围没有符合筛选条件的有效历史采样。用量需要至少两次有效采样；总额度增加会标注为可能充值/套餐调整，不代表插件执行了充值。";
+  if(box){var note=lines.length?lines.join("<br>"):"当前范围没有符合筛选条件的有效历史采样。用量需要至少两次有效采样；总额度增加会标注为可能充值/套餐调整，不代表插件执行了充值。";if(suspiciousRechargeCount)note+="<br><span class='tip'>已忽略 "+suspiciousRechargeCount+" 次异常总额度跳变（可能是上游单位或解析变化），未计入可能充值。</span>";note+="<br><span class='tip'>采样数是服务器原始快照条数，历史表按日期、账号、类型和币种合并展示。</span>";box.innerHTML=note;}
 }
 function renderServerHistory(){
   var box=document.getElementById("dailyRows");
@@ -483,7 +492,7 @@ function renderServerHistory(){
   var html="<table><thead><tr><th>日期</th><th>站点地址</th><th>类型</th><th>首值</th><th>末值</th><th>变化判断</th><th>采样来源</th></tr></thead><tbody>";
   Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="";
     if(g.kind==="quota") { var d=historyNum(a.remaining)&&historyNum(b.remaining)?Number(b.remaining)-Number(a.remaining):null; change=d===null?"无法计算":(d>0?"剩余增加 +"+historyAmount(d,"积分"):d<0?"剩余消耗 "+historyAmount(d,"积分"):"无变化"); extra=g.window||"配额"; }
-    else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,ld=historyNum(a.limit)&&historyNum(b.limit)?Number(b.limit)-Number(a.limit):null,ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ld!==null||ud!==null){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(ld!==null&&ld>0)change.push("总额度增加（可能充值/套餐调整） +"+historyAmount(ld,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
+    else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,ld=historyRechargeDelta(a,b),ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ld.value!==null||ld.suspicious||ud!==null){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(ld.suspicious)change.push("总额度异常跳变，已忽略");else if(ld.value>0)change.push("总额度增加（可能充值/套餐调整） +"+historyAmount(ld.value,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
     html+="<tr><td>"+esc(a.day)+"</td><td><b>"+esc(name.base_url||"未提供站点地址")+"</b><div class='tip'>"+esc((g.provider||name.provider||"未知供应商")+" | "+(name.label||name.name||g.key))+"</div></td><td>"+esc(g.kind==="quota"?"配额 · "+extra:"余额 · "+g.currency)+"</td><td>"+(g.kind==="quota"?historyAmount(a.remaining,"积分"):historyAmount(a.balance,g.currency))+"</td><td>"+(g.kind==="quota"?historyAmount(b.remaining,"积分"):historyAmount(b.balance,g.currency))+"</td><td>"+esc(change)+"</td><td>"+esc(a.source||"manual")+" → "+esc(b.source||"manual")+"</td></tr>";
   });
   box.innerHTML=html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。</div>";

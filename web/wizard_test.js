@@ -240,6 +240,19 @@ test('history summary calculates usage, possible recharge, balance change, and q
 });
 
 
+test('history summary ignores implausible limit jumps as recharge', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:10,limit:100,balance:90},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:20,limit:100000000,balance:80}
+  ];
+  context.historyRange = 'today';
+  element('dailyFrom').value = '2026-09-28';
+  element('dailyTo').value = '2026-09-28';
+  context.renderHistorySummary();
+  assert.equal(element('historyRecharge').textContent, 'CNY 0');
+  assert.match(element('historySummaryBreakdown').innerHTML, /异常总额度跳变/);
+});
 test('configuration opens above account list and focuses the selected form', () => {
   const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
   assert.ok(html.indexOf('id="cfgCard"') < html.indexOf('id="accountPanel"'));
