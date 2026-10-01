@@ -310,6 +310,7 @@ func clearUsageHistory() error {
 	return nil
 }
 
+func boolInt(value bool) int {
 	if value {
 		return 1
 	}

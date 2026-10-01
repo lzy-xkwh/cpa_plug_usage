@@ -281,9 +281,9 @@ func TestNormalizeQuotaDefaultsMissingCurrencyToCNY(t *testing.T) {
 	}}
 	resp, err := normalizeQuota(document, document, false, config{
 		BalancePath: "data.balance",
-		LimitPath: "data.limit",
-		UsedPath: "data.used",
-		WindowName: "balance",
+		LimitPath:   "data.limit",
+		UsedPath:    "data.used",
+		WindowName:  "balance",
 	})
 	if err != nil {
 		t.Fatalf("normalizeQuota() error = %v", err)

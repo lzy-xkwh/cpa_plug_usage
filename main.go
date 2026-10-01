@@ -1931,11 +1931,19 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 			return okEnvelope(managementJSONResponse([]byte(`{"ok":true,"message":"服务器用量历史已清空"}`))), nil
 		}
 		var historyReq usageHistoryRequest
-		if raw := firstQuery(req.Query, "from"); raw != "" { historyReq.From = raw }
-		if raw := firstQuery(req.Query, "to"); raw != "" { historyReq.To = raw }
-		if raw := firstQuery(req.Query, "key"); raw != "" { historyReq.Key = raw }
+		if raw := firstQuery(req.Query, "from"); raw != "" {
+			historyReq.From = raw
+		}
+		if raw := firstQuery(req.Query, "to"); raw != "" {
+			historyReq.To = raw
+		}
+		if raw := firstQuery(req.Query, "key"); raw != "" {
+			historyReq.Key = raw
+		}
 		payload, err := marshalUsageHistory(historyReq)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
 	if saveJSON := firstQuery(req.Query, "save"); saveJSON != "" {
@@ -2051,16 +2059,16 @@ func wizardDataResponse() map[string]any {
 // sanitizedPageConfig 把当前配置裁剪成页面可用的形态（不含密钥与请求头）。
 func sanitizedPageConfig(cfg config) map[string]any {
 	out := map[string]any{
-		"enabled":              cfg.Enabled,
-		"priority":             cfg.Priority,
-		"providers":            cfg.Providers,
-		"selected_credentials": cfg.SelectedCredentials,
-		"usage_db_path":               usageDBPath(cfg),
-		"usage_retention_days":        cfg.UsageRetentionDays,
-		"daily_query_hour":            cfg.DailyQueryHour,
-		"daily_query_minute":          cfg.DailyQueryMinute,
+		"enabled":                      cfg.Enabled,
+		"priority":                     cfg.Priority,
+		"providers":                    cfg.Providers,
+		"selected_credentials":         cfg.SelectedCredentials,
+		"usage_db_path":                usageDBPath(cfg),
+		"usage_retention_days":         cfg.UsageRetentionDays,
+		"daily_query_hour":             cfg.DailyQueryHour,
+		"daily_query_minute":           cfg.DailyQueryMinute,
 		"daily_query_interval_minutes": cfg.DailyQueryIntervalMinutes,
-		"profiles":                    map[string]any{},
+		"profiles":                     map[string]any{},
 	}
 	profiles := map[string]any{}
 	for name, p := range cfg.Profiles {
@@ -2576,29 +2584,29 @@ func fetchProviderBalance(provider string, credentialKeys ...string) providerBal
 // （向导在仅配置 default 档案时会把档案字段提升到顶层提交）。
 // 密钥、认证头、凭据路径、管理地址与 allow_insecure_http 始终拒绝。
 var wizardTopLevelKeys = map[string]struct{}{
-	"enabled":              {},
-	"priority":             {},
-	"profiles":             {},
-	"providers":            {},
-	"selected_credentials": {},
-	"vendor":               {},
-	"base_url":             {},
-	"endpoint":             {},
-	"used_endpoint":        {},
-	"used_scale":           {},
-	"balance_scale":        {},
-	"limit_scale":          {},
-	"method":               {},
-	"balance_path":         {},
-	"used_path":            {},
-	"limit_path":           {},
-	"currency_path":        {},
-	"plan_path":            {},
-	"reset_path":           {},
-	"window_name":          {},
-	"usage_db_path":        {},
-	"usage_retention_days":  {},
-	"daily_query_hour":     {},
+	"enabled":                      {},
+	"priority":                     {},
+	"profiles":                     {},
+	"providers":                    {},
+	"selected_credentials":         {},
+	"vendor":                       {},
+	"base_url":                     {},
+	"endpoint":                     {},
+	"used_endpoint":                {},
+	"used_scale":                   {},
+	"balance_scale":                {},
+	"limit_scale":                  {},
+	"method":                       {},
+	"balance_path":                 {},
+	"used_path":                    {},
+	"limit_path":                   {},
+	"currency_path":                {},
+	"plan_path":                    {},
+	"reset_path":                   {},
+	"window_name":                  {},
+	"usage_db_path":                {},
+	"usage_retention_days":         {},
+	"daily_query_hour":             {},
 	"daily_query_minute":           {},
 	"daily_query_interval_minutes": {},
 }
