@@ -40,13 +40,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
-      - name: Prepare Go dependencies
-        run: go mod download
-
       - name: Vet
         run: |
           set -euo pipefail
-          CGO_ENABLED=1 go vet ./...
+          CGO_ENABLED=1 go vet -mod=vendor ./...
 
       - name: Test (race + coverage)
         if: matrix.run-tests
