@@ -105,7 +105,6 @@ type config struct {
 	CredentialHeader  string            `yaml:"credential_header" json:"credential_header"`
 	CredentialPrefix  string            `yaml:"credential_prefix" json:"credential_prefix"`
 	AllowInsecureHTTP bool              `yaml:"allow_insecure_http" json:"allow_insecure_http"`
-	TimeoutSeconds    int               `yaml:"timeout_seconds" json:"timeout_seconds"`
 	// ManagementKey / ManagementURL 供配置向导在服务端调用 CPA 管理 API：
 	// 自动列出已配置供应商、保存配置。仅保存在插件配置里，不回传给页面。
 	ManagementKey string `yaml:"management_key" json:"management_key"`
@@ -326,7 +325,6 @@ var (
 		CredentialHeader: "Authorization",
 		CredentialPrefix: "Bearer ",
 		CredentialPaths:  []string{"access_token", "accessToken", "api_key", "apiKey", "token", "key"},
-		TimeoutSeconds:   15,
 		WindowName:       "balance",
 	}
 )
@@ -459,9 +457,9 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.18",
+			Version:          "0.9.19",
 			Author:           "community",
-			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
+			GitHubRepository: "https://github.com/lzy-xkwh/cpa_plug_usage",
 			ConfigFields: []configField{
 				{Name: "enabled", Type: "boolean", Description: "是否启用余额查询。"},
 				{Name: "priority", Type: "integer", Description: "CPA 选择额度提供方时使用的优先级。"},
@@ -477,7 +475,7 @@ func pluginRegistrationResponse() pluginRegistration {
 				{Name: "method", Type: "enum", Description: "余额请求使用的 HTTP 方法。", EnumValues: []string{"GET", "POST"}},
 				{Name: "credential_paths", Type: "string", Description: "在 CPA storage_json 中查找令牌/API Key 的 JSON 路径，多个用英文逗号分隔。"},
 				{Name: "credential_header", Type: "string", Description: "承载凭据的请求头，例如 Authorization 或 Cookie。"},
-				{Name: "credential_prefix", Type: "string", Description: "凭据前的前缀文本，例如 Bearer；留空时默认为 Bearer 。"},
+				{Name: "credential_prefix", Type: "string", Description: "凭据前的前缀文本，例如 Bearer；Authorization 留空默认为 Bearer，Cookie 等请求头可留空。"},
 				{Name: "balance_path", Type: "string", Description: "响应 JSON 中当前余额所在路径。"},
 				{Name: "limit_path", Type: "string", Description: "可选，响应 JSON 中总额度所在路径。"},
 				{Name: "used_path", Type: "string", Description: "可选，响应 JSON 中已用额度所在路径。"},
@@ -661,7 +659,7 @@ func normalizeDefaults(next *config) error {
 	if next.CredentialHeader == "" {
 		next.CredentialHeader = "Authorization"
 	}
-	if next.CredentialPrefix == "" {
+	if next.CredentialPrefix == "" && strings.EqualFold(strings.TrimSpace(next.CredentialHeader), "authorization") {
 		next.CredentialPrefix = "Bearer "
 	}
 	if next.Vendor == "glm" || next.Vendor == "zai" {
@@ -669,9 +667,6 @@ func normalizeDefaults(next *config) error {
 	}
 	if len(next.CredentialPaths) == 0 {
 		next.CredentialPaths = []string{"access_token", "accessToken", "api_key", "apiKey", "token", "key"}
-	}
-	if next.TimeoutSeconds <= 0 {
-		next.TimeoutSeconds = 15
 	}
 	if next.UsedScale <= 0 {
 		next.UsedScale = 1
@@ -956,12 +951,6 @@ func setConfigScalar(out *config, key, value string) error {
 			return fmt.Errorf("allow_insecure_http 必须是布尔值")
 		}
 		out.AllowInsecureHTTP = parsed
-	case "timeout_seconds":
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("timeout_seconds 必须是整数")
-		}
-		out.TimeoutSeconds = parsed
 	case "balance_path":
 		out.BalancePath = value
 	case "used_path":
@@ -1228,19 +1217,6 @@ func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchRe
 		return config{}, nil, missingBaseURLError(provider)
 	}
 
-	if vendor := vendorByHost(baseURL); vendor != "" {
-		profile := cfg
-		profile.BaseURL = baseURL
-		profile.Vendor = vendor
-		if err := applyVendorPreset(&profile); err != nil {
-			return config{}, nil, err
-		}
-		if err := normalizeDefaults(&profile); err != nil {
-			return config{}, nil, err
-		}
-		return profile, nil, nil
-	}
-
 	if cached, ok := strategyCache.Load(baseURL); ok {
 		if profile, ok := cached.(config); ok {
 			return profile, nil, nil
@@ -1258,7 +1234,10 @@ func autoDetectProfile(cfg config, req quotaFetchRequest) (config, *quotaFetchRe
 		if err := applyVendorPreset(&profile); err != nil {
 			continue
 		}
-		normalizeDefaults(&profile)
+		if err := normalizeDefaults(&profile); err != nil {
+			lastErr = err
+			continue
+		}
 		result, err := fetchQuotaWithProfile(profile, req)
 		if err == nil {
 			strategyCache.Store(baseURL, profile)
@@ -2127,19 +2106,11 @@ func managementBaseURL(cfg config) string {
 
 // wizardAggregate 按供应商名聚合的凭据计数与展示信息。
 type wizardAggregate struct {
-	label      string
-	active     int
-	disabled   int
-	sampleURL  string
-	siteURLs   map[string]struct{}
-	credential []credentialInfo
-}
-
-// listCredentials 通过宿主回调 host.auth.list 读取凭据文件供应商，
-// 按供应商聚合并标注余额状态。带 base_url 的凭据视为第三方中转，
-// 即使 provider 名与官方厂商同名（如 openai）也按可配置处理。
-func listCredentials() ([]providerStatus, []credentialInfo, string) {
-	return listAllProviders("")
+	label     string
+	active    int
+	disabled  int
+	sampleURL string
+	siteURLs  map[string]struct{}
 }
 
 // listAllProviders 汇总两个来源的供应商：
@@ -2189,7 +2160,6 @@ func listAllProviders(managementKey string) ([]providerStatus, []credentialInfo,
 				entry.label = cred.Name
 			}
 		}
-		entry.credential = append(entry.credential, cred)
 	}
 
 	// 来源 1：凭据文件（host.auth.list）。失败时保留错误说明，继续读取配置文件供应商。
@@ -2450,6 +2420,7 @@ func credentialForProvider(provider string, credentialKey ...string) (providerCr
 			Files []struct {
 				Provider  string `json:"provider"`
 				AuthIndex string `json:"auth_index"`
+				BaseURL   string `json:"base_url"`
 				Disabled  bool   `json:"disabled"`
 			} `json:"files"`
 		}
@@ -2458,7 +2429,8 @@ func credentialForProvider(provider string, credentialKey ...string) (providerCr
 				if strings.ToLower(strings.TrimSpace(file.Provider)) != provider || file.Disabled || file.AuthIndex == "" {
 					continue
 				}
-				profileKey := credentialProfileKey(provider, "", file.AuthIndex)
+				baseURL := strings.TrimSpace(file.BaseURL)
+				profileKey := credentialProfileKey(provider, baseURL, file.AuthIndex)
 				if wanted != "" && wanted != file.AuthIndex && wanted != profileKey {
 					continue
 				}
@@ -2468,7 +2440,7 @@ func credentialForProvider(provider string, credentialKey ...string) (providerCr
 						JSON json.RawMessage `json:"json"`
 					}
 					if json.Unmarshal(getRaw, &getResult) == nil && len(getResult.JSON) > 0 {
-						return providerCredential{storageJSON: getResult.JSON}, nil
+						return providerCredential{storageJSON: getResult.JSON, baseURL: baseURL}, nil
 					}
 				}
 			}

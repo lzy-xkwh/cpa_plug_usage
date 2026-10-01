@@ -7,7 +7,6 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) ext=dll ;;
 esac
 
-go mod tidy
-go build -buildmode=c-shared -o "api-balance.${ext}" .
+go build -mod=vendor -buildmode=c-shared -o "api-balance.${ext}" .
 rm -f api-balance.h
 echo "built api-balance.${ext}"

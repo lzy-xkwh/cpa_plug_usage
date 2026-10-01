@@ -35,18 +35,12 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          ext="so"
           cc=""
           if [ "$GOARCH" = "arm64" ]; then
             cc="aarch64-linux-gnu-gcc"
           fi
-          if [ -n "$cc" ]; then
-            CC="$cc" CGO_ENABLED=1 GOOS=linux GOARCH="$GOARCH" \
-              go build -mod=vendor -trimpath -buildmode=c-shared -o api-balance.so .
-          else
-            CGO_ENABLED=1 GOOS=linux GOARCH="$GOARCH" \
-              go build -mod=vendor -trimpath -buildmode=c-shared -o api-balance.so .
-          fi
+          CC="$cc" CGO_ENABLED=1 GOOS=linux GOARCH="$GOARCH" \
+            go build -mod=vendor -trimpath -buildmode=c-shared -o api-balance.so .
           rm -f api-balance.h
           archive="api-balance_${version}_linux_${GOARCH}.zip"
           zip "$archive" api-balance.so

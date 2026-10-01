@@ -124,7 +124,6 @@ var PRESETS = {
   "zai":        {label:"Z.AI GLM 配额", ep:"https://api.z.ai/api/monitor/usage/quota/limit"},
   "custom":     {label:"自定义", bal:"", cur:"", lim:"", used:""}
 };
-var NOLABEL = {"openai":1,"claude":1,"claude-code":1,"codex":1,"gemini":1,"gemini-cli":1,"qwen":1,"qwen-code":1,"anthropic":1};
 var PROVIDER_PRESET = {"openai-compatible-glm":"glm","zhipu-coding-plan":"glm","zhipu":"glm","zhipuai":"glm"};
 var DATA = null;
 var selected = {};
@@ -287,44 +286,11 @@ function displayCurrency(value){
   return !currency || currency === "未知币种" || currency === "UNKNOWN" ? "CNY" : currency;
 }
 function knownNumber(v){ return v !== undefined && v !== null && v !== "" && isFinite(Number(v)); }
-function selectedCredentialRows(){
-  var q = ((document.getElementById("summaryAccount") || {}).value || "").trim().toLowerCase();
-  var cur = ((document.getElementById("summaryCurrency") || {}).value || "").trim().toUpperCase();
-  return credentialRows().filter(function(c){
-    if (!displaySel[c.key]) return false;
-    if (q && accountText(c).indexOf(q) < 0) return false;
-    var r = balanceCache[c.key];
-    return !cur || (r && r.ok && displayCurrency(resultCurrency(r)) === cur);
-  });
-}
 function renderCurrencyOptions(id, values){
   var el=document.getElementById(id); if(!el) return;
   var old=el.value, html='<option value="">全部币种</option>';
   values.sort().forEach(function(c){ html += '<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
   el.innerHTML=html; if(values.indexOf(old)>=0) el.value=old;
-}
-function renderSummary(){
-  var rows = credentialRows(), chosen = selectedCredentialRows(), ready = 0, byCurrency = {}, currencies = [];
-  rows.forEach(function(c){ if (displaySel[c.key] && c.status === "ok") ready++; });
-  chosen.forEach(function(c){
-    var r=balanceCache[c.key]; if(!r || !r.ok) return;
-    var cur=displayCurrency(resultCurrency(r));
-    if(!byCurrency[cur]) byCurrency[cur]={balance:0,balanceKnown:true,used:0,usedKnown:true,count:0};
-    var g=byCurrency[cur]; g.count++;
-    if(r.has_balance !== false && knownNumber(r.balance)) g.balance += Number(r.balance); else g.balanceKnown=false;
-    if(r.has_used && knownNumber(r.used)) g.used += Number(r.used); else g.usedKnown=false;
-  });
-  currencies=Object.keys(byCurrency); renderCurrencyOptions("summaryCurrency",currencies);
-  var selectedCurrency=((document.getElementById("summaryCurrency")||{}).value||"").trim().toUpperCase();
-  var keys=Object.keys(byCurrency).filter(function(c){return !selectedCurrency || c===selectedCurrency;});
-  var b=keys.length===1 && byCurrency[keys[0]].balanceKnown ? formatAmount(byCurrency[keys[0]].balance,keys[0]) : "—";
-  var u=keys.length===1 && byCurrency[keys[0]].usedKnown ? formatAmount(byCurrency[keys[0]].used,keys[0]) : "—";
-  document.getElementById("statSelected").textContent = chosen.length;
-  document.getElementById("statReady").textContent = ready;
-  document.getElementById("statBalance").textContent = b;
-  document.getElementById("statUsed").textContent = u;
-  var parts=keys.map(function(c){var g=byCurrency[c];return esc(c)+"：余额 "+(g.balanceKnown?formatAmount(g.balance,c):"—")+"，已用 "+(g.usedKnown?formatAmount(g.used,c):"—")+"（"+g.count+" 个账号）";});
-  document.getElementById("summaryByCurrency").innerHTML=parts.length?parts.join("<br>"):"暂无当前选择范围内的成功查询结果";
 }
 var serverHistory = null;
 var historyRange = "30d";
@@ -610,7 +576,6 @@ function renderDailySnapshots(){
   });
   box.innerHTML=html+"</tbody></table><div class='tip'>当前余额是当天最后一次成功查询值；日内变化是首末快照之差。单次查询、币种缺失、used 未提供或发生重置都会单独标明，不会按 0 处理。</div>";
 }
-function clearDailySnapshots(){ storageRemove(snapshotKey()); renderDailySnapshots(); }
 
 function applyData(d){
   if (!d) return;

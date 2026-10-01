@@ -14,8 +14,8 @@
 - **其它中转站 / 自建网关**：sub2api 等，通过自定义 `endpoint` +
   响应 JSON 路径适配，不需要重新编译插件。
 
-> Z.AI（智谱）目前没有公开的余额查询 API，暂无法内置预设；
-> 待官方提供接口后可按同样的方式加入 `vendorPresets`。
+> Z.AI / 智谱的 Coding Plan 支持配额查询（`vendor: zai` 或自动识别）；普通
+> API Key 的现金余额不由该接口提供，需在供应商控制台查看。
 
 与浏览器扩展类工具（如 All API Hub）的差异：All API Hub 依赖登录浏览器的
 Cookie 会话读取面板数据；本插件只使用 CPA 存储中的 API Key，在服务端无人
@@ -29,8 +29,7 @@ Cookie 会话读取面板数据；本插件只使用 CPA 存储中的 API Key，
 在本目录执行：
 
 ```bash
-go mod tidy
-go build -buildmode=c-shared -o api-balance.so .
+go build -mod=vendor -buildmode=c-shared -o api-balance.so .
 rm -f api-balance.h
 ```
 
@@ -49,8 +48,8 @@ rm -f api-balance.h
 可视化表单包含：
 
 - 启用开关、优先级；
-- 厂商预设 `vendor`（custom / deepseek / moonshot），选择后自动填充
-  官方接口地址与余额路径；
+- 厂商预设 `vendor`（custom / deepseek / moonshot / new-api / sub2api / one-api /
+  openrouter / kuaipao / glm / zai），选择后自动填充接口地址与余额路径；
 - 余额接口地址、GET/POST 请求方式（自定义站点时使用）；
 - Token/API Key 的 JSON 字段路径、认证请求头和前缀；
 - 余额、总额度、已用额度、币种、套餐、重置时间等响应 JSON 路径；
@@ -82,34 +81,7 @@ plugins:
   dir: "/CLIProxyAPI/plugins"
   store-sources:
     - "https://raw.githubusercontent.com/lzy-xkwh/cpa_plug_usage/main/registry.json"
-  # GitHub API 匿名请求有速率限制。Docker 部署建议配置一个环境变量令牌。
-  store-auth:
-    - match: "https://api.github.com/"
-      apply-to:
-        - registry
-        - artifact
-      type: bearer
-      token-env: "CLIPROXY_PLUGIN_STORE_TOKEN"
 ```
-
-Docker Compose 中只传环境变量名，不要把真实令牌提交到 Git：
-
-```yaml
-services:
-  cpa:
-    environment:
-      CLIPROXY_PLUGIN_STORE_TOKEN: ${CLIPROXY_PLUGIN_STORE_TOKEN}
-```
-
-然后在宿主机 `.env` 或部署系统的 Secret 中设置
-`CLIPROXY_PLUGIN_STORE_TOKEN`，再执行：
-
-```bash
-docker compose up -d
-```
-
-令牌不会写入插件清单、插件状态或日志。CPA 官方示例也将商店认证值从环境
-变量读取，并支持分别覆盖 registry 和 artifact 请求。
 
 重启 CPA 后，在插件商店刷新并安装 `api-balance`。后续发布新的
 GitHub Release 后，插件商店可以直接更新，不需要再次手动复制动态库。
@@ -402,7 +374,6 @@ plugins:
       plan_path: data.plan
       reset_path: data.reset_at
       window_name: balance
-      timeout_seconds: 15
 ```
 
 如果只有余额而没有总额度，`balance_path` 会被作为 0～1 的剩余比例；

@@ -311,14 +311,20 @@ type usageHistoryRequest struct {
 	Currency string `json:"currency"`
 }
 
-func usageHistoryWhere(req usageHistoryRequest) (string, []any) {
+func normalizedHistoryRange(req usageHistoryRequest) (string, string) {
 	from, to := strings.TrimSpace(req.From), strings.TrimSpace(req.To)
+	now := time.Now()
 	if from == "" {
-		from = time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+		from = now.AddDate(0, 0, -30).Format("2006-01-02")
 	}
 	if to == "" {
-		to = time.Now().Format("2006-01-02")
+		to = now.Format("2006-01-02")
 	}
+	return from, to
+}
+
+func usageHistoryWhere(req usageHistoryRequest) (string, []any) {
+	from, to := normalizedHistoryRange(req)
 	where := "day >= ? AND day <= ?"
 	args := []any{from, to}
 	if key := strings.TrimSpace(req.Key); key != "" {
@@ -373,13 +379,7 @@ func usageHistoryResponse(req usageHistoryRequest) (map[string]any, error) {
 	if serverUsageStore.db == nil {
 		return nil, fmt.Errorf("SQLite 尚未打开")
 	}
-	from, to := strings.TrimSpace(req.From), strings.TrimSpace(req.To)
-	if from == "" {
-		from = time.Now().AddDate(0, 0, -30).Format("2006-01-02")
-	}
-	if to == "" {
-		to = time.Now().Format("2006-01-02")
-	}
+	from, to := normalizedHistoryRange(req)
 	where, args := usageHistoryWhere(req)
 	query := `SELECT observed_at,day,account_key,provider,currency,kind,window,balance,used,limit_value,remaining,remaining_fraction,reset_time,has_balance,has_used,has_limit,source FROM usage_snapshots WHERE ` + where
 	query += " ORDER BY observed_at DESC, id DESC LIMIT 5000"

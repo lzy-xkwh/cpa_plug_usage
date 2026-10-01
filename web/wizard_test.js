@@ -124,27 +124,6 @@ test('storage failures do not throw or break query state', () => {
   assert.equal(context.snapshotItems().length, 0);
 });
 
-test('summary keeps currencies separate and does not coerce unknown values to zero', () => {
-  const h = loadWizard();
-  const {context, element} = h;
-  context.DATA = {providers:[], credentials:[
-    {provider:'one', name:'a', profile_key:'one@a', status:'ok'},
-    {provider:'two', name:'b', profile_key:'two@b', status:'ok'},
-    {provider:'three', name:'c', profile_key:'three@c', status:'ok'}
-  ], config:{}};
-  context.displaySel = {'one@a':true, 'two@b':true, 'three@c':true};
-  context.balanceCache = {
-    'one@a': {ok:true, balance:10, has_used:true, used:4, currency:'USD'},
-    'two@b': {ok:true, balance:20, has_used:true, used:8, currency:'CNY'},
-    'three@c': {ok:true, has_used:false, currency:'USD'}
-  };
-  context.renderSummary();
-  assert.equal(element('statBalance').textContent, '—');
-  assert.equal(element('statUsed').textContent, '—');
-  assert.match(element('summaryByCurrency').innerHTML, /USD/);
-  assert.match(element('summaryByCurrency').innerHTML, /CNY/);
-});
-
 test('in-flight requests are deduplicated and failures are cached', async () => {
   let calls = 0;
   let resolveFetch;
@@ -281,8 +260,6 @@ test('GLM quota is described without showing a zero cash balance', () => {
   context.renderSelectedBalances();
   assert.match(element('selected-bal-glm-a').innerHTML, /5 小时额度 剩余 75%/);
   assert.doesNotMatch(element('selected-bal-glm-a').innerHTML, /余额 0/);
-  context.renderSummary();
-  assert.equal(element('statBalance').textContent, '—');
 });
 
 test('manual refresh queries only existing selected accounts and bypasses cached balances', async () => {

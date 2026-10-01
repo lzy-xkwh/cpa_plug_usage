@@ -83,6 +83,15 @@ daily_query_interval_minutes: 30
 	}
 }
 
+func TestCookieCredentialPrefixCanBeEmpty(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\ncredential_header: Cookie\ncredential_prefix: ''\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	if got := currentConfig().CredentialPrefix; got != "" {
+		t.Fatalf("credential prefix = %q, want empty for Cookie header", got)
+	}
+}
+
 func TestDisabledConfigDoesNotRequireEndpoint(t *testing.T) {
 	if err := applyConfig([]byte("enabled: false\npriority: 0\n")); err != nil {
 		t.Fatalf("applyConfig() error for disabled plugin = %v", err)
@@ -1406,6 +1415,47 @@ func TestProvidersSelectionGatesQuota(t *testing.T) {
 
 // 向导的 ?balance= 端点在服务端完成取数：凭据文件优先，
 // 找不到时回退配置文件 API-Key 供应商；结果不含任何密钥。
+func TestCredentialForProviderMatchesMultiSiteProfileKey(t *testing.T) {
+	if err := applyConfig([]byte("enabled: true\n")); err != nil {
+		t.Fatalf("applyConfig() error = %v", err)
+	}
+	const provider = "openai-compatible-relay"
+	const baseURL = "https://relay.example.com/v1"
+	wanted := credentialProfileKey(provider, baseURL, "auth-1")
+	previous := hostCallMethod
+	var balanceRequest httpRequest
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		switch hostMethod {
+		case "host.auth.list":
+			return json.Marshal(map[string]any{"files": []map[string]any{{
+				"provider": provider, "auth_index": "auth-1", "base_url": baseURL,
+			}}})
+		case "host.auth.get":
+			return json.Marshal(map[string]any{"json": map[string]any{"api_key": "test-key"}})
+		case "host.http.do":
+			if err := json.Unmarshal(payload, &balanceRequest); err != nil {
+				t.Fatalf("decode host.http.do payload: %v", err)
+			}
+			body, _ := json.Marshal(map[string]any{"data": map[string]any{"balance": 12.5}})
+			return json.Marshal(httpResponse{StatusCode: 200, Body: body})
+		default:
+			t.Fatalf("unexpected host method %q", hostMethod)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	if err := applyConfig([]byte("enabled: true\nvendor: custom\nendpoint: '{base_url}/balance'\nbalance_path: data.balance\n")); err != nil {
+		t.Fatalf("applyConfig() with endpoint template error = %v", err)
+	}
+	got := fetchProviderBalance(provider, wanted)
+	if !got.OK || got.Balance != 12.5 {
+		t.Fatalf("fetchProviderBalance() = %#v, want balance 12.5", got)
+	}
+	if balanceRequest.URL != baseURL+"/balance" {
+		t.Fatalf("balance request URL = %q, want %q", balanceRequest.URL, baseURL+"/balance")
+	}
+}
+
 func TestFetchProviderBalanceUsesCredentials(t *testing.T) {
 	if err := applyConfig([]byte("enabled: true\nmanagement_key: stored-key\n")); err != nil {
 		t.Fatalf("applyConfig() error = %v", err)
@@ -1488,7 +1538,7 @@ func TestListCredentialsClassification(t *testing.T) {
 		return result, nil
 	}
 	t.Cleanup(func() { hostCallMethod = previous })
-	providers, credentials, note := listCredentials()
+	providers, credentials, note := listAllProviders("")
 	if note != "" {
 		t.Fatalf("note = %q, want empty", note)
 	}
@@ -1522,7 +1572,7 @@ func TestListCredentialsHostErrorIsActionable(t *testing.T) {
 		return nil, errors.New("host bridge unavailable")
 	}
 	t.Cleanup(func() { hostCallMethod = previous })
-	_, _, note := listCredentials()
+	_, _, note := listAllProviders("")
 	if !strings.Contains(note, "host.auth.list") {
 		t.Fatalf("note = %q, want host.auth.list mention", note)
 	}

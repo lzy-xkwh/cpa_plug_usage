@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -65,7 +66,9 @@ func runUsageScheduler(stop <-chan struct{}) {
 				continue
 			}
 			lastRun = localNow
-			_ = runDailyUsageCollection()
+			if err := runDailyUsageCollection(); err != nil {
+				hostLog("error", "api-balance 定时采样失败: "+err.Error())
+			}
 		}
 	}
 }
@@ -78,7 +81,10 @@ func runDailyUsageCollection() error {
 	}
 	selected := map[string]struct{}{}
 	for _, key := range cfg.SelectedCredentials {
-		selected[key] = struct{}{}
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "" {
+			selected[key] = struct{}{}
+		}
 	}
 	if cfg.SelectedCredentials != nil && len(selected) == 0 {
 		return nil
@@ -88,9 +94,9 @@ func runDailyUsageCollection() error {
 		if credential.Disabled {
 			continue
 		}
-		key := credential.ProfileKey
+		key := strings.ToLower(strings.TrimSpace(credential.ProfileKey))
 		if key == "" {
-			key = credential.AuthIndex
+			key = strings.ToLower(strings.TrimSpace(credential.AuthIndex))
 		}
 		if cfg.SelectedCredentials != nil {
 			if _, ok := selected[key]; !ok {
