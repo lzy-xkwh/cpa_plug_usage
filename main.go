@@ -1910,7 +1910,7 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		historyReq.Provider = firstQuery(req.Query, "provider")
 		historyReq.Source = firstQuery(req.Query, "source")
 		historyReq.Currency = firstQuery(req.Query, "currency")
-		if req.Method == http.MethodDelete {
+		if req.Method == http.MethodDelete || (req.Method == http.MethodGet && firstQuery(req.Query, "action") == "clear") {
 			if err := clearUsageHistory(historyReq); err != nil {
 				return nil, err
 			}

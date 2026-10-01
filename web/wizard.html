@@ -370,7 +370,8 @@ function clearServerHistory(filtered){
   var title=filtered?"确定删除当前日期和筛选条件内的服务器用量历史吗？此操作不可恢复。":"确定删除服务器上的全部用量历史吗？此操作不可恢复。";
   if(!window.confirm(title)) return;
   var query=filtered?historyQuery(true):"from=0000-01-01&to=9999-12-31";
-  fetchTimeout("/v0/resource/plugins/api-balance/usage-history"+(query?"?"+query:""), {method:"DELETE"}, 15000)
+  var clearQuery=query+(query?"&":"")+"action=clear&_="+Date.now();
+  fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+clearQuery, {method:"GET",cache:"no-store"}, 15000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
     .then(function(){return loadServerHistory();})
     .then(function(){msg(filtered?"当前筛选范围的服务器历史已清空":"服务器用量历史已清空","ok");})

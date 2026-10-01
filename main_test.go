@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -562,6 +563,48 @@ func TestUnknownConfigKeyIgnored(t *testing.T) {
 	}
 }
 
+func TestManagementUsageHistoryClearActionAcceptsGET(t *testing.T) {
+	oldConfig := currentConfig()
+	defer func() {
+		closeUsageStore()
+		configMu.Lock()
+		runtimeConfig = oldConfig
+		configMu.Unlock()
+	}()
+	cfg := oldConfig
+	cfg.UsageDBPath = filepath.Join(t.TempDir(), "usage-clear.db")
+	configMu.Lock()
+	runtimeConfig = cfg
+	configMu.Unlock()
+	if err := openUsageStore(cfg); err != nil {
+		t.Fatal(err)
+	}
+	serverUsageStore.mu.Lock()
+	_, err := serverUsageStore.db.Exec(`INSERT INTO usage_snapshots (observed_at,day,account_key,provider,source) VALUES (?, ?, ?, ?, ?)`, "2026-10-01T00:00:00Z", "2026-10-01", "a", "relay", "manual")
+	serverUsageStore.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/usage-history","query":{"from":["0000-01-01"],"to":["9999-12-31"],"action":["clear"]}}`)
+	raw, err := handleMethod("management.handle", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := decodeManagementResponse(t, raw)
+	if !strings.Contains(string(response.Body), "已清空") {
+		t.Fatalf("clear response = %s", response.Body)
+	}
+	serverUsageStore.mu.Lock()
+	var count int
+	err = serverUsageStore.db.QueryRow(`SELECT COUNT(*) FROM usage_snapshots`).Scan(&count)
+	serverUsageStore.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("history count after clear = %d, want 0", count)
+	}
+}
 func TestManagementRegisterAndHandle(t *testing.T) {
 	raw, err := handleMethod("management.register", nil)
 	if err != nil {

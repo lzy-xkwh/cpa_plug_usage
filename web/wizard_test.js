@@ -323,6 +323,8 @@ test('server history filters build query parameters and expose scoped deletion',
   assert.match(html, /删除全部服务器历史/);
   assert.match(html, /clearServerHistory\(true\)/);
   assert.match(html, /clearServerHistory\(false\)/);
+  assert.match(html, /action=clear/);
+  assert.match(html, /method:"GET",cache:"no-store"/);
   assert.ok(html.indexOf('<th>站点地址</th><th>余额 / 用量</th>') >= 0);
   assert.ok(html.indexOf('<th>日期</th><th>站点地址</th><th>类型</th>') >= 0);
   assert.ok(html.indexOf('id="dailyProvider"') < html.indexOf('id="dailyAccountSelect"'));
