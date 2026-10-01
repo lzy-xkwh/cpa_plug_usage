@@ -346,8 +346,8 @@ test('server history filters build query parameters and expose scoped deletion',
   assert.match(html, /删除全部服务器历史/);
   assert.match(html, /clearServerHistory\(true\)/);
   assert.match(html, /clearServerHistory\(false\)/);
-  assert.ok(html.indexOf('<th>供应商</th><th>账号</th><th>站点地址</th>') >= 0);
-  assert.ok(html.indexOf('<th>日期</th><th>供应商</th><th>账号</th><th>站点地址</th>') >= 0);
+  assert.ok(html.indexOf('<th>站点地址</th><th>余额 / 用量</th>') >= 0);
+  assert.ok(html.indexOf('<th>日期</th><th>站点地址</th><th>类型</th>') >= 0);
   assert.ok(html.indexOf('id="dailyProvider"') < html.indexOf('id="dailyAccountSelect"'));
 });
 
@@ -362,10 +362,9 @@ test('server history rows lead with provider and separate account and site', () 
   }];
   context.renderServerHistory();
   const html = element('dailyRows').innerHTML;
-  assert.match(html, /<th>供应商<\/th><th>账号<\/th><th>站点地址<\/th>/);
-  assert.match(html, /<b>codex<\/b>/);
-  assert.match(html, /codex API-Key/);
-  assert.match(html, /https:\/\/kuaipao\.ai\/v1/);
+  assert.match(html, /<th>日期<\/th><th>站点地址<\/th><th>类型<\/th>/);
+  assert.match(html, /<b>https:\/\/kuaipao\.ai\/v1<\/b><div class='tip'>codex \| codex API-Key<\/div>/);
+  assert.doesNotMatch(html, /<th>供应商<\/th><th>账号<\/th>/);
 });
 
 test('usage history range buttons set the expected date bounds', () => {
