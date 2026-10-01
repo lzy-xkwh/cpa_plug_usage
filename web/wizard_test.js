@@ -253,6 +253,32 @@ test('history summary ignores implausible limit jumps as recharge', () => {
   assert.equal(element('historyRecharge').textContent, 'CNY 0');
   assert.match(element('historySummaryBreakdown').innerHTML, /异常总额度跳变/);
 });
+test('history summary uses filtered first and last values only', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:100,limit:100,balance:10},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:110,limit:99999835,balance:9},
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:120,limit:100.0002,balance:8},
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash-b',provider:'other',currency:'CNY',kind:'balance',used:0,limit:50,balance:20},
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-b',provider:'other',currency:'CNY',kind:'balance',used:5,limit:70,balance:15}
+  ];
+  context.historyRange = 'today';
+  element('dailyFrom').value = '2026-09-28';
+  element('dailyTo').value = '2026-09-28';
+  element('dailyAccount').value = 'cash-a';
+  context.renderHistorySummary();
+  assert.equal(element('historySummaryRange').textContent, 'today · 2026-09-28 至 2026-09-28 · 3 条采样 / 1 个账号');
+  assert.equal(element('historyUsage').textContent, 'CNY 20');
+  assert.equal(element('historyRecharge').textContent, 'CNY 0.0002');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY -2');
+  assert.doesNotMatch(element('historySummaryBreakdown').innerHTML, /99,998/);
+
+  element('dailyAccount').value = 'cash-b';
+  context.renderHistorySummary();
+  assert.equal(element('historySummaryRange').textContent, 'today · 2026-09-28 至 2026-09-28 · 2 条采样 / 1 个账号');
+  assert.equal(element('historyUsage').textContent, 'CNY 5');
+  assert.equal(element('historyRecharge').textContent, 'CNY 20');
+});
 test('configuration opens above account list and focuses the selected form', () => {
   const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
   assert.ok(html.indexOf('id="cfgCard"') < html.indexOf('id="accountPanel"'));

@@ -406,12 +406,18 @@ function historySummaryNumber(value, known, currencies){
   if(currencies.length===1) return historyAmount(value,currencies[0]);
   return currencies.length ? "多币种" : "—";
 }
+function historyLimitUsable(row){
+  if(!historyNum(row&&row.limit))return false;
+  var limit=Math.abs(Number(row.limit));
+  var scale=Math.max(100,Math.abs(Number(row.balance)||0)+Math.abs(Number(row.used)||0));
+  return limit<=1000000||limit<=scale*1000;
+}
 function historyRechargeDelta(previous,current){
-  if(!historyNum(previous&&previous.limit)||!historyNum(current&&current.limit))return {value:null,suspicious:false};
+  if(!historyLimitUsable(previous)||!historyLimitUsable(current))return {value:null,suspicious:true};
   var added=Number(current.limit)-Number(previous.limit);
   if(added<=0)return {value:0,suspicious:false};
-  var baseline=Math.max(Math.abs(Number(previous.limit)),Math.abs(Number(current.balance)||0));
-  var suspicious=added>1000000&&added>Math.max(100,baseline*100);
+  var baseline=Math.max(Math.abs(Number(previous.limit)),Math.abs(Number(current.balance)||0)+Math.abs(Number(current.used)||0));
+  var suspicious=added>Math.max(100,baseline*100);
   return {value:suspicious?null:added,suspicious:suspicious};
 }
 function renderHistorySummary(){
@@ -445,18 +451,13 @@ function renderHistorySummary(){
     var first=rows[0], latest=rows[rows.length-1];
     if(historyNum(latest.balance)){c.current+=Number(latest.balance);c.hasCurrent=true;} else c.currentKnown=false;
     if(historyNum(first.balance)&&historyNum(latest.balance)){c.balanceChange+=Number(latest.balance)-Number(first.balance);c.balanceChangeKnown=true;}
-    for(var i=1;i<rows.length;i++){
-      var previous=rows[i-1], current=rows[i];
-      if(historyNum(previous.used)&&historyNum(current.used)){
-        var usage=Number(current.used)-Number(previous.used);
-        if(usage>=0){c.usage+=usage;c.usageKnown=true;}
-      }
-      if(historyNum(previous.limit)&&historyNum(current.limit)){
-        var recharge=historyRechargeDelta(previous,current);
-        if(recharge.suspicious){suspiciousRechargeCount++;c.rechargeKnown=true;}
-        else if(recharge.value>0){c.recharge+=recharge.value;c.rechargeKnown=true;}
-      }
+    if(historyNum(first.used)&&historyNum(latest.used)){
+      var totalUsage=Number(latest.used)-Number(first.used);
+      if(totalUsage>=0){c.usage+=totalUsage;c.usageKnown=true;}
     }
+    var recharge=historyRechargeDelta(first,latest);
+    if(recharge.suspicious){suspiciousRechargeCount++;c.rechargeKnown=true;}
+    else if(recharge.value>0){c.recharge+=recharge.value;c.rechargeKnown=true;}
   });
   var usage=0,usageKnown=false,recharge=0,rechargeKnown=false,balanceChange=0,balanceChangeKnown=false;
   Object.keys(cash).forEach(function(currency){var c=cash[currency];if(c.usageKnown){usage+=c.usage;usageKnown=true;}if(c.rechargeKnown){recharge+=c.recharge;rechargeKnown=true;}if(c.balanceChangeKnown){balanceChange+=c.balanceChange;balanceChangeKnown=true;}});
