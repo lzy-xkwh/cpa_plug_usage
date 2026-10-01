@@ -199,6 +199,8 @@ test('selected account table ignores unselected accounts and escapes labels', ()
   context.balanceCache.a = {ok:true, balance:12.5, currency:'CNY'};
   context.renderSelectedBalances();
   assert.match(element('selectedRows').innerHTML, /&lt;account&gt;/);
+  assert.match(element('selectedRows').innerHTML, /deepseek/);
+  assert.match(element('selectedRows').innerHTML, /https:\/\/a\.test/);
   assert.doesNotMatch(element('selectedRows').innerHTML, /hidden/);
   assert.match(element('selected-bal-a').innerHTML, /CNY 12.5/);
   assert.equal(element('selected-bal-a').innerHTML, element('bal-a').innerHTML);
@@ -344,6 +346,26 @@ test('server history filters build query parameters and expose scoped deletion',
   assert.match(html, /删除全部服务器历史/);
   assert.match(html, /clearServerHistory\(true\)/);
   assert.match(html, /clearServerHistory\(false\)/);
+  assert.ok(html.indexOf('<th>供应商</th><th>账号</th><th>站点地址</th>') >= 0);
+  assert.ok(html.indexOf('<th>日期</th><th>供应商</th><th>账号</th><th>站点地址</th>') >= 0);
+  assert.ok(html.indexOf('id="dailyProvider"') < html.indexOf('id="dailyAccountSelect"'));
+});
+
+test('server history rows lead with provider and separate account and site', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{
+    provider:'codex', profile_key:'codex-a', label:'codex API-Key', base_url:'https://kuaipao.ai/v1'
+  }], config:{}};
+  context.serverHistory = [{
+    observed_at:'2026-10-01T09:00:00Z', day:'2026-10-01', account_key:'codex-a',
+    provider:'codex', currency:'CNY', kind:'balance', balance:10, source:'manual'
+  }];
+  context.renderServerHistory();
+  const html = element('dailyRows').innerHTML;
+  assert.match(html, /<th>供应商<\/th><th>账号<\/th><th>站点地址<\/th>/);
+  assert.match(html, /<b>codex<\/b>/);
+  assert.match(html, /codex API-Key/);
+  assert.match(html, /https:\/\/kuaipao\.ai\/v1/);
 });
 
 test('usage history range buttons set the expected date bounds', () => {
