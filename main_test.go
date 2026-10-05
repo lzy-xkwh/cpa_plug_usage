@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -610,7 +611,7 @@ func TestManagementRegisterAndHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("management.register error = %v", err)
 	}
-	if !strings.Contains(string(raw), "config-wizard") || !strings.Contains(string(raw), "config-data") || !strings.Contains(string(raw), "\"余额\"") {
+	if !strings.Contains(string(raw), "config-wizard") || !strings.Contains(string(raw), "config-data") || !strings.Contains(string(raw), "usage-latest") || !strings.Contains(string(raw), "\"余额\"") {
 		t.Fatalf("register response missing wizard/data routes: %s", raw)
 	}
 	raw, err = handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard"}`))
@@ -641,6 +642,58 @@ func TestManagementRegisterAndHandle(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "405") {
 		t.Fatalf("POST should return 405, got %s", raw)
+	}
+}
+
+func TestManagementJSONResponseDisablesCaching(t *testing.T) {
+	response := managementJSONResponse([]byte(`{"items":[]}`))
+	if got := response.Headers["Cache-Control"]; len(got) != 1 || got[0] != "no-store" {
+		t.Fatalf("Cache-Control = %#v, want no-store", response.Headers["Cache-Control"])
+	}
+}
+
+func TestBalanceSnapshotFailureReturnsExplicitFailure(t *testing.T) {
+	closeUsageStore()
+	oldConfig := currentConfig()
+	defer func() {
+		stopUsageScheduler()
+		closeUsageStore()
+		configMu.Lock()
+		runtimeConfig = oldConfig
+		configMu.Unlock()
+	}()
+	path := filepath.Join(t.TempDir(), "usage-link.db")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "target.db"), path); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyConfig([]byte("enabled: true\nvendor: deepseek\nusage_db_path: " + path + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	previous := hostCallMethod
+	hostCallMethod = func(hostMethod string, payload []byte) ([]byte, error) {
+		switch hostMethod {
+		case "host.auth.list":
+			return json.Marshal(map[string]any{"files": []map[string]any{{"provider": "deepseek", "auth_index": "a"}}})
+		case "host.auth.get":
+			return json.Marshal(map[string]any{"json": map[string]any{"api_key": "test-key"}})
+		case "host.http.do":
+			return json.Marshal(httpResponse{StatusCode: 200, Body: []byte(`{"balance_infos":[{"total_balance":12.5,"currency":"USD"}]}`)})
+		default:
+			return nil, fmt.Errorf("unexpected host method %q", hostMethod)
+		}
+	}
+	t.Cleanup(func() { hostCallMethod = previous })
+	raw, err := handleMethod("management.handle", []byte(`{"method":"GET","path":"/v0/resource/plugins/api-balance/config-wizard","query":{"balance":["deepseek"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := decodeManagementResponse(t, raw)
+	var result map[string]any
+	if err := json.Unmarshal(response.Body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["ok"] != false || !strings.Contains(result["message"].(string), "保存 SQLite 快照失败") {
+		t.Fatalf("snapshot failure result = %#v", result)
 	}
 }
 

@@ -5,53 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>api-balance 余额配置向导</title>
 <style>
-:root{--bd:#e2e8f0;--bg:#f8fafc;--tx:#0f172a;--mu:#64748b;--ac:#2563eb;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--soft:#eff6ff}
+:root{--bd:#d9e2ec;--bd-strong:#c5d2df;--bg:#f4f7fb;--surface:#fff;--surface-soft:#f8fafc;--tx:#142235;--mu:#64748b;--ac:#1d63d8;--ac-dark:#174ea6;--ok:#17824b;--err:#c73939;--warn:#a86608;--soft:#eaf2ff;--shadow:0 8px 24px rgba(20,34,53,.06)}
 *{box-sizing:border-box;font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-body{margin:0;background:var(--bg);color:var(--tx)}
-.wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:var(--mu);font-size:13px;margin-bottom:20px}
-.card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
-.card h2{font-size:15px;margin:0 0 10px}
-.overview{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 14px}
-.metric{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;min-width:0}
-.metric .value{font-size:22px;font-weight:700;line-height:1.2}
-.metric .label{font-size:12px;color:var(--mu);margin:4px 0 0}
-.metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
-.filterbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}.filterbar input,.filterbar select{max-width:240px}.filterbar .tip{margin:0}
-.quick-range{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.quick-range .btn{padding:7px 10px;font-size:12px}.quick-range .btn.active{color:var(--ac);border-color:var(--ac);background:var(--soft)}
-.history-date-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.history-date-filter input{max-width:160px}
-.tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:1px solid var(--bd)}.tab{border:0;background:transparent;padding:8px 12px;color:var(--mu);cursor:pointer;font-size:13px;border-bottom:2px solid transparent}.tab.active{color:var(--ac);border-bottom-color:var(--ac);font-weight:600}
+body{margin:0;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+.wrap{max-width:1080px;margin:0 auto;padding:28px 20px 64px}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}.page-kicker{color:var(--ac);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}.page-head h1{font-size:24px;letter-spacing:0;margin:2px 0 4px}.sub{color:var(--mu);font-size:13px;margin:0;max-width:720px}.server-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #b9d2f3;border-radius:999px;background:#edf5ff;color:#285b9d;font-size:12px;white-space:nowrap}.server-badge:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.card{background:var(--surface);border:1px solid var(--bd);border-radius:8px;padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+.card h2{font-size:16px;line-height:1.35;margin:0}.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.card-head-actions,.toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.overview{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:0 0 16px}.metric{background:var(--surface);border:1px solid var(--bd);border-radius:8px;padding:13px 14px;min-width:0}.metric .value{font-size:22px;font-weight:700;line-height:1.2;letter-spacing:0}.metric .label{font-size:12px;color:var(--mu);margin:5px 0 0}.metric.ok .value{color:var(--ok)}.metric.warn .value{color:var(--warn)}.metric.info .value{color:var(--ac)}
+.filterbar{display:flex;gap:8px;align-items:center;margin:0 0 12px}.filterbar input,.filterbar select{max-width:260px}.filterbar .tip{margin:0}.filterbar input{flex:1}.quick-range{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.quick-range .btn{padding:7px 10px;font-size:12px}.quick-range .btn.active{color:var(--ac);border-color:#8eb5e8;background:var(--soft);font-weight:600}.history-date-filter{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}.history-date-filter input{max-width:160px}.history-filters{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:8px;align-items:end;margin-top:12px}.history-filters label{margin-top:0}
+.tabs{display:flex;gap:2px;margin:0 0 16px;border-bottom:1px solid var(--bd)}.tab{border:0;background:transparent;padding:10px 16px;color:var(--mu);cursor:pointer;font-size:13px;border-bottom:2px solid transparent}.tab:hover{color:var(--tx);background:var(--surface-soft)}.tab:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid rgba(29,99,216,.22);outline-offset:2px}.tab.active{color:var(--ac);border-bottom-color:var(--ac);font-weight:650}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.statbox{border:1px solid var(--bd);border-radius:8px;padding:12px}.statbox b{font-size:20px}.statbox span{display:block;color:var(--mu);font-size:12px;margin-top:4px}
-.history-summary{margin:0 0 14px;padding:12px 0 14px;border-bottom:1px solid var(--bd)}.history-summary-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.history-summary-head b{font-size:15px}.history-summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px}.history-metric{min-width:0;padding:10px;border:1px solid var(--bd);border-radius:8px;background:#fff}.history-metric .value{font-size:18px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}.history-metric .label{font-size:12px;color:var(--mu);margin-top:4px}.history-metric.recharge .value{color:var(--warn)}.history-metric.usage .value{color:var(--ac)}.history-breakdown{margin-top:10px;line-height:1.7}
-label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
-input,select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff}
-.row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
-.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
-.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}
-.selected-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 6px}.selected-head h3{font-size:14px;margin:0}
-.table-scroll{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
-th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
-th{color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
-.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap}
-.tag.ok{background:#dcfce7;color:var(--ok)}.tag.no{background:#fee2e2;color:var(--err)}.tag.todo{background:#fef3c7;color:var(--warn)}
-.balance-detail{white-space:normal;overflow-wrap:anywhere;line-height:1.6}td{overflow-wrap:anywhere}
-.daily-detail{min-width:175px}.daily-detail summary{white-space:nowrap}.daily-detail .tip{margin-top:4px}
-.quota-bar{height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:6px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}
-.configbox{border:1px dashed var(--bd);border-radius:8px;padding:10px;margin-top:8px;font-size:13px}.configbox.focus-config{border-color:var(--ac);box-shadow:0 0 0 2px var(--soft)}
-details{margin-top:6px}summary{font-size:12px;color:var(--ac);cursor:pointer}
-textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7px;font:12px/1.5 ui-monospace,monospace;padding:10px}
-.tip{font-size:12px;color:var(--mu);margin-top:6px}
-#msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:18px;margin:8px 0 0}
-.btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}
-@media(max-width:640px){.wrap{padding:16px 10px 48px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:10px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:12px}.card h2{line-height:1.6}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0 -4px;padding:0 4px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}.history-summary-grid{grid-template-columns:repeat(2,1fr)}.history-summary-head{display:block}.history-summary-head .tip{margin-top:4px}}
-
+.history-summary{margin:0 0 16px;padding:0 0 16px;border-bottom:1px solid var(--bd)}.history-summary-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.history-summary-head b{font-size:16px}.history-summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px}.history-metric{min-width:0;padding:11px;border:1px solid var(--bd);border-radius:7px;background:var(--surface-soft)}.history-metric .value{font-size:18px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}.history-metric .label{font-size:12px;color:var(--mu);margin-top:4px}.history-metric.recharge .value{color:var(--warn)}.history-metric.usage .value{color:var(--ac)}.history-chart-panel{margin:0 0 18px;padding:14px 0 16px;border-bottom:1px solid var(--bd)}.history-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}.history-chart-head h3{font-size:14px;margin:0}.chart-controls{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.chart-controls label{margin:0;min-width:112px}.chart-controls select{padding:6px 8px}.history-chart{min-height:300px;border:1px solid var(--bd);border-radius:7px;background:linear-gradient(to bottom,#fbfdff,#f8fafc);overflow:hidden}.history-chart svg{display:block;width:100%;height:auto;min-height:300px}.history-chart .grid-line{stroke:#dfe7ef;stroke-width:1}.history-chart .axis-label{fill:#64748b;font-size:11px}.history-chart .line{fill:none;stroke:#1d63d8;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.history-chart .point{fill:#fff;stroke:#1d63d8;stroke-width:2}.history-chart .bar{fill:#8eb5e8;opacity:.85}.history-chart .zero-line{stroke:#9eb5cc;stroke-dasharray:4 4}.history-chart-note{margin-top:7px}.chart-legend{display:flex;align-items:center;gap:6px;color:var(--mu);font-size:12px}.chart-legend-dot{width:8px;height:8px;border-radius:50%;background:var(--ac)}
+label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}input,select{width:100%;padding:8px 10px;border:1px solid var(--bd-strong);border-radius:6px;font-size:13px;background:var(--surface);color:var(--tx)}input::placeholder{color:#94a3b8}.row{display:flex;gap:10px;align-items:flex-end}.row>div{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 12px;border-radius:6px;border:1px solid var(--bd-strong);background:var(--surface);color:var(--tx);cursor:pointer;font-size:13px;white-space:nowrap;transition:background .15s,border-color .15s,color .15s}.btn:hover{border-color:#9eb5cc;background:var(--surface-soft)}.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff}.btn.primary:hover{background:var(--ac-dark);border-color:var(--ac-dark)}
+.selected-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 6px}.selected-head h3{font-size:14px;margin:0}.table-scroll{overflow-x:auto;border:1px solid var(--bd);border-radius:7px}table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--bd);vertical-align:top}tr:last-child td{border-bottom:0}th{color:var(--mu);font-weight:600;font-size:12px;white-space:nowrap;background:var(--surface-soft)}td{overflow-wrap:anywhere}.tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:12px;white-space:nowrap}.tag.ok{background:#e5f6ec;color:var(--ok)}.tag.no{background:#fdeaea;color:var(--err)}.tag.todo{background:#fff4da;color:var(--warn)}.balance-detail{white-space:normal;overflow-wrap:anywhere;line-height:1.6}.daily-detail{min-width:175px}.daily-detail summary{white-space:nowrap}.daily-detail .tip{margin-top:4px}
+.quota-bar{height:5px;background:#dce5ee;border-radius:3px;overflow:hidden;margin-top:7px;max-width:220px}.quota-bar span{display:block;height:100%;background:var(--ok);border-radius:3px}.quota-bar.low span{background:var(--warn)}.quota-bar.empty span{background:var(--err)}.configbox{border:1px dashed var(--bd-strong);border-radius:7px;padding:12px;margin-top:9px;font-size:13px}.configbox.focus-config{border-color:var(--ac);box-shadow:0 0 0 3px var(--soft)}details{margin-top:8px}summary{font-size:12px;color:var(--ac);cursor:pointer}.diagnostic{margin-top:12px}.selection-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 0}.selection-bar .tip{margin:0}textarea{width:100%;min-height:150px;border:1px solid var(--bd-strong);border-radius:6px;font:12px/1.5 ui-monospace,monospace;padding:10px}.tip{font-size:12px;color:var(--mu);margin-top:6px}#msg,#globalMsg{font-size:12px;margin-left:8px}#globalMsg{display:block;min-height:20px;margin:8px 0 0}.btn:disabled{opacity:.6;cursor:wait}.ok{color:var(--ok)}.err{color:var(--err)}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.status-line{min-height:20px}.table-scroll{position:relative}@media(max-width:860px){.overview{grid-template-columns:repeat(3,1fr)}.history-filters{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.wrap{padding:18px 10px 48px}.page-head{display:block;margin-bottom:16px}.page-head h1{font-size:21px}.server-badge{margin-top:12px}.overview{grid-template-columns:repeat(2,1fr);gap:8px}.metric{padding:11px}.metric .value{font-size:20px}.row{display:block}.row>div{margin-top:8px}.card{padding:14px;margin-bottom:12px}.card-head{display:block}.card-head-actions{margin-top:10px}.card h2{line-height:1.5}.card h2 .btn{float:none!important;margin-top:6px}.table-scroll{margin:0;border-radius:6px}.filterbar{display:block}.filterbar input,.filterbar select{max-width:none;margin-top:6px}.history-filters{grid-template-columns:1fr}.history-summary-grid{grid-template-columns:repeat(2,1fr)}.history-summary-head{display:block}.history-summary-head .tip{margin-top:4px}.history-date-filter{align-items:stretch}.history-date-filter input{max-width:none}.history-date-filter>label{flex:1}.tabs{overflow-x:auto}.tab{padding:10px 12px;white-space:nowrap}}
 </style>
 </head>
 <body><div class="wrap">
-<h1>API 余额查询 · 配置向导</h1>
-<div class="sub">已配置的供应商会自动尝试显示余额；只有自动搞不定的才需要在这里补一笔配置。全部操作无需手写 YAML。</div>
+<header class="page-head"><div><div class="page-kicker">CPA PLUGIN · API BALANCE</div><h1>余额与用量中心</h1><p class="sub">集中查看供应商、账号站点和服务器历史快照。余额查询在服务端完成，页面只展示 CPA 返回的数据。</p></div><span class="server-badge">服务端数据</span></header>
 <div id="globalMsg" role="status" aria-live="polite"></div>
 <div class="overview" aria-label="余额概览">
  <div class="metric info"><div class="value" id="metricTotal">—</div><div class="label">已发现供应商</div></div>
@@ -62,31 +36,30 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
  <div class="metric"><div class="value" id="metricSites">—</div><div class="label">中转站点数</div></div>
 </div>
 
-<div class="tabs"><button class="tab active" onclick="showView('home',this)">首页</button><button class="tab" onclick="showView('accounts',this)">账号配置</button><button class="tab" onclick="showView('daily',this)">用量历史</button></div>
-<div id="view-home" class="card"><h2>已选择账号余额 <button class="btn primary" id="selectedBalancesBtn" style="float:right" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></h2><div class="tip">这里只显示在“账号配置”页勾选并保存的账号；进入页面不会自动查询。可使用每行的“刷新”按钮单独更新失败账号，也可点击上方按钮刷新全部。</div><div class="table-scroll"><table><thead><tr><th>站点地址</th><th>余额 / 用量</th><th style="width:72px">操作</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">加载中…</td></tr></tbody></table></div></div>
-<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><h2>用量历史 <button class="btn primary" style="float:right" onclick="fetchAllBalances(document.getElementById('allBalancesBtn'))">立即查询全部</button><button class="btn" style="float:right;margin-right:6px" onclick="loadServerHistory()">刷新历史</button></h2><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务默认从本地时间 00:00 起每小时采样一次，覆盖当天；历史默认永久保留，只有点击“删除服务器历史”并确认才会清空。余额增加只表示供应商返回值变大，可能是充值、退款、赠送或套餐调整；插件不会执行充值。</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyProvider" onchange="onHistoryServerFilterChanged()"><option value="">全部提供方</option></select><select id="dailyAccountSelect" onchange="onHistoryServerFilterChanged()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、站点或来源" oninput="renderDailySnapshots()"><select id="dailySource" onchange="onHistoryServerFilterChanged()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(true)">删除当前筛选历史</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(false)">删除全部服务器历史</button><select id="dailyCurrency" onchange="onHistoryServerFilterChanged()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
+<nav class="tabs" role="tablist" aria-label="余额中心视图"><button id="homeTab" class="tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="view-home" data-view="home" onkeydown="tabKeydown(event)" onclick="showView('home',this)">首页</button><button id="accountsTab" class="tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="accountPanel" data-view="accounts" onkeydown="tabKeydown(event)" onclick="showView('accounts',this)">账号配置</button><button id="dailyTab" class="tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-daily" data-view="daily" onkeydown="tabKeydown(event)" onclick="showView('daily',this)">用量历史</button></nav>
+<div id="view-home" class="card" role="tabpanel" aria-labelledby="homeTab" tabindex="-1"><div class="card-head"><div><h2>已选择账号余额</h2><div class="tip">进入页面只读取服务器 SQLite 最新快照，不会自动请求供应商。</div></div><div class="card-head-actions"><button class="btn primary" id="selectedBalancesBtn" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></div></div><div class="tip">这里只显示在“账号配置”页勾选并保存的账号。可使用每行的“刷新”按钮单独查询，也可点击上方按钮刷新全部。</div><div class="table-scroll"><table><caption class="sr-only">已选择账号的服务器余额快照</caption><thead><tr><th scope="col">站点地址</th><th scope="col">余额 / 用量</th><th scope="col" style="width:72px">操作</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">正在读取服务器快照…</td></tr></tbody></table></div></div>
+<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><div class="history-chart-panel"><div class="history-chart-head"><div><h3>趋势分析</h3><div class="tip">按当前筛选条件聚合服务器采样；切换粒度查看每天或每小时变化。</div></div><div class="chart-controls"><label for="historyGranularity">时间粒度<select id="historyGranularity" onchange="renderHistoryChart()"><option value="day">按天</option><option value="hour">按小时</option></select></label><label for="historyMetric">展示指标<select id="historyMetric" onchange="renderHistoryChart()"><option value="balance">余额</option><option value="used">用量</option><option value="remaining">配额剩余</option></select></label></div></div><div class="chart-legend"><span class="chart-legend-dot"></span><span id="historyChartLegend">余额</span></div><div id="historyChart" class="history-chart" role="img" aria-label="用量历史趋势图"><div class="empty-state">正在等待服务器历史数据…</div></div><div id="historyChartNote" class="tip history-chart-note" role="status" aria-live="polite"></div></div><div class="card-head"><h2>用量历史</h2><div class="card-head-actions"><button id="historyRefreshBtn" class="btn" onclick="loadServerHistory(this)">刷新历史</button><button id="historyQueryBtn" class="btn primary" onclick="fetchAllBalances(this)">立即查询全部</button></div></div><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务按服务器本地时间采样；余额增加只表示上游返回值变化，可能是充值、退款、赠送或套餐调整，不代表插件执行了充值。</div><div id="historyStatus" class="tip status-line" role="status" aria-live="polite">等待读取服务器历史…</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" aria-label="开始日期" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" aria-label="结束日期" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyProvider" onchange="onHistoryServerFilterChanged()"><option value="">全部提供方</option></select><select id="dailyAccountSelect" onchange="onHistoryServerFilterChanged()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、站点或来源" oninput="renderDailySnapshots()"><select id="dailySource" onchange="onHistoryServerFilterChanged()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(true)">删除当前筛选历史</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(false)">删除全部服务器历史</button><select id="dailyCurrency" onchange="onHistoryServerFilterChanged()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
-<div class="tip">你使用的是 CPAMP Full/Manager 页面时，这里的“当前页面管理密钥”填写 CPAMP 登录用的管理员密钥；CPAMP 会在服务端把它换成已保存的 CPA Management Key，插件不会保存 <code>cpamp_...</code>。如果直接访问 CPA 的管理页面，则填写 CPA 配置 <code>remote-management.secret-key</code> 的原始明文。下面的 CPA 地址必须是 CPAMP 服务端或插件所在环境能够访问的 CPA 地址，例如 <code>http://192.168.1.2:8137</code>，不能填 CPAMP 的 <code>:18317</code>。密钥只在服务端处理，不会返回页面。<b style="color:var(--err)">连续认证失败 5 次可能触发 CPA 临时封禁；确认地址和密钥后只提交一次。</b></div>
+<div class="tip" id="keyHelp">密钥只在服务端处理，不会返回页面。连续认证失败可能触发 CPA 临时封禁。</div>
 <div class="row" style="margin-top:8px">
-  <div style="flex:2"><input id="cpaurl" type="url" autocomplete="off" placeholder="CPA 地址，例如 http://192.168.1.2:8137"></div>
-  <div style="flex:2"><input id="mgmtkey" type="password" autocomplete="off" placeholder="当前页面管理密钥：CPAMP 管理员密钥或 CPA Management Key"></div>
+  <div style="flex:2"><label for="cpaurl">CPA 地址</label><input id="cpaurl" type="url" autocomplete="off" aria-describedby="keyHelp" placeholder="CPA 地址，例如 http://192.168.1.2:8137"></div>
+  <div style="flex:2"><label for="mgmtkey">页面管理密钥</label><input id="mgmtkey" type="password" autocomplete="off" aria-describedby="keyHelp" placeholder="当前页面管理密钥：CPAMP 管理员密钥或 CPA Management Key"></div>
   <div><button class="btn primary" id="saveKeyBtn" onclick="saveKey()">保存连接</button></div>
 </div>
 </div>
 
-<div class="card" id="cfgCard" style="display:none">
-<h2>② 为选中的供应商配置余额查询</h2>
+<div class="card" id="cfgCard" style="display:none"><div class="card-head"><h2>余额查询配置</h2><span class="tip">为选中的账号设置接口策略</span></div>
 <div id="forms"></div>
 <div class="row" style="margin-top:10px">
-  <div style="flex:2"><label>可选：为简单站点补一个通用档案（键 default，兜底未匹配凭据）</label>
+  <div style="flex:2"><label for="defaultBase">通用站点地址（可选）</label>
   <input id="defaultBase" placeholder="留空 = 不添加"></div>
 </div>
 <div style="margin-top:12px">
-  <button class="btn primary" onclick="saveAll()">保存到 CPA</button>
-  <button class="btn" onclick="showYAML()">仅生成 YAML</button>
-  <span id="msg"></span>
+  <button id="saveAllBtn" class="btn primary" onclick="saveAll(this)">保存到 CPA</button>
+  <button id="yamlBtn" class="btn" onclick="showYAML(this)">仅生成 YAML</button>
+  <span id="msg" role="status" aria-live="polite"></span>
 </div>
 <div id="yamlBox" style="display:none;margin-top:10px">
   <label>生成的配置（YAML，可复制到插件配置手动保存）</label>
@@ -94,17 +67,17 @@ textarea{width:100%;min-height:150px;border:1px solid var(--bd);border-radius:7p
 </div>
 </div>
 
-<div class="card" id="accountPanel" style="display:none"><h2>① 账号 / 站点余额状态 <button class="btn" id="allBalancesBtn" style="float:right" onclick="fetchAllBalances(this)">查询全部余额</button><button class="btn" id="refreshBtn" style="float:right;margin-right:6px" onclick="refreshAccountConfig(this)">手动刷新账号配置</button><button class="btn" style="float:right;margin-right:6px" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button></h2>
+<div class="card" id="accountPanel" style="display:none"><div class="card-head"><h2>账号 / 站点余额状态</h2><div class="card-head-actions"><button class="btn" id="keyBtn" onclick="toggleKeySetup()">管理密钥</button><button class="btn" id="refreshBtn" onclick="refreshAccountConfig(this)">刷新账号配置</button><button class="btn primary" id="allBalancesBtn" onclick="fetchAllBalances(this)">查询全部余额</button></div></div>
 <div class="filterbar">
- <input id="providerSearch" placeholder="搜索供应商、标签或站点" oninput="renderProviderRows()">
- <select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select>
- <span class="tip" id="providerCount"></span>
+  <div><label for="providerSearch">搜索账号或站点</label><input id="providerSearch" placeholder="供应商、标签或站点地址" oninput="renderProviderRows()"></div>
+  <div><label for="providerStatus">状态筛选</label><select id="providerStatus" onchange="renderProviderRows()"><option value="">全部状态</option><option value="ok">可直接查询</option><option value="configurable">需要配置</option><option value="unsupported">官方不支持</option></select></div>
+  <span class="tip" id="providerCount" role="status" aria-live="polite"></span>
 </div>
-<div class="tip">进入本页不会自动刷新账号配置；点击“手动刷新账号配置”才会重新读取供应商、账号和站点状态。首页只自动刷新已选择显示的账号余额。</div>
-<div class="table-scroll"><table><thead><tr><th style="width:18%">供应商 / 账号</th><th style="width:25%">站点地址</th><th style="width:17%">状态</th><th style="width:25%">余额 / 用量</th><th style="width:120px">操作</th></tr></thead>
+<div class="tip">进入本页不会自动刷新账号配置或供应商余额。先刷新账号配置，再按需查询单个或全部账号；查询结果由服务器保存到 SQLite。</div>
+<div class="table-scroll"><table><caption class="sr-only">账号和站点余额状态</caption><thead><tr><th scope="col" style="width:18%">供应商 / 账号</th><th scope="col" style="width:25%">站点地址</th><th scope="col" style="width:17%">状态</th><th scope="col" style="width:25%">余额 / 用量</th><th scope="col" style="width:120px">操作</th></tr></thead>
 <tbody id="provRows"><tr><td colspan="5" class="tip">尚未加载账号配置，请点击“手动刷新账号配置”。</td></tr></tbody></table></div>
 <div class="tip" id="provNote"></div>
-<div class="selection-bar" id="selectionBar" style="display:none;margin-top:10px"><span class="tip">显示选择会保存到 CPA，刷新后保留：</span><button class="btn primary" onclick="saveSelection()">保存显示选择</button><span id="selectionMsg" class="tip"></span></div>
+<div class="selection-bar" id="selectionBar" style="display:none;margin-top:10px"><span class="tip">显示选择会保存到 CPA，刷新后保留：</span><button class="btn primary" onclick="saveSelection(this)">保存显示选择</button><span id="selectionMsg" class="tip"></span></div>
 <details style="margin-top:8px"><summary>诊断：宿主返回的原始凭据清单（不含密钥）</summary>
 <div class="tip" id="credInfo"></div>
 <table><thead><tr><th>provider</th><th>名称/标签</th><th>站点地址</th><th>状态</th></tr></thead><tbody id="credRows"></tbody></table>
@@ -130,7 +103,7 @@ var selected = {};
 var displaySel = {};
 var displaySelInitialized = false;
 var queried = {};
-var balanceCache = storageGet("api-balance-balance-v1", {});
+var balanceCache = {};
 var inFlight = {};
 var keySetupOpened = false;
 var formDrafts = {};
@@ -262,21 +235,25 @@ function loadError(text){
 }
 function showView(view, button){
   currentView = view;
-  document.getElementById("view-home").style.display = view === "home" ? "block" : "none";
-  document.getElementById("view-daily").style.display = view === "daily" ? "block" : "none";
-  document.getElementById("accountPanel").style.display = view === "accounts" ? "block" : "none";
+  var panels={home:document.getElementById("view-home"),accounts:document.getElementById("accountPanel"),daily:document.getElementById("view-daily")};
+  var tabs=document.querySelectorAll(".tab");
+  Object.keys(panels).forEach(function(name){var panel=panels[name];if(!panel)return;var active=name===view;panel.style.display=active?"block":"none";panel.hidden=!active;panel.setAttribute("aria-hidden",active?"false":"true");});
+  tabs.forEach(function(b){var active=b.getAttribute("data-view")===view;b.classList.toggle("active",active);b.setAttribute("aria-selected",active?"true":"false");b.tabIndex=active?0:-1;});
+  if(button&&button.getAttribute("data-view")!==view){var activeTab=document.querySelector('[data-view="'+view+'"]');if(activeTab)activeTab.focus();}
   document.getElementById("cfgCard").style.display = view === "accounts" && Object.keys(selected).length ? "block" : "none";
-  document.querySelectorAll(".tab").forEach(function(b){ b.classList.remove("active"); });
-  if (button) button.classList.add("active");
   if (view === "home") renderSelectedBalances();
   if (view === "daily") { if (serverHistory === null) loadServerHistory(); else renderDailySnapshots(); }
 }
-function storageGet(key, fallback){
-  try { if (window.localStorage) { var raw = localStorage.getItem(key); return raw == null ? fallback : JSON.parse(raw); } } catch(e) {}
-  return fallback;
+function tabKeydown(event){
+  if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight"&&event.key!=="Home"&&event.key!=="End")return;
+  var tabs=Array.prototype.slice.call(document.querySelectorAll(".tab")), index=tabs.indexOf(event.currentTarget), next=index;
+  if(event.key==="ArrowLeft")next=(index+tabs.length-1)%tabs.length;
+  if(event.key==="ArrowRight")next=(index+1)%tabs.length;
+  if(event.key==="Home")next=0;
+  if(event.key==="End")next=tabs.length-1;
+  event.preventDefault();
+  var target=tabs[next];if(target)showView(target.getAttribute("data-view"),target);
 }
-function storageSet(key, value){ try { if (window.localStorage) localStorage.setItem(key, JSON.stringify(value)); } catch(e) {} }
-function storageRemove(key){ try { if (window.localStorage) localStorage.removeItem(key); } catch(e) {} }
 function nowISO(){ return new Date().toISOString(); }
 function localDay(date){ var d=date||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function accountText(c){ return [c.provider,c.label,c.name,c.base_url].join(" ").toLowerCase(); }
@@ -293,9 +270,13 @@ function renderCurrencyOptions(id, values){
   el.innerHTML=html; if(values.indexOf(old)>=0) el.value=old;
 }
 var serverHistory = null;
+var serverHistoryError = "";
+var historyTruncated = false;
 var historyRange = "30d";
 var historyLoading = null;
+var historyRequestSeq = 0;
 var historyRefreshTimer = null;
+var allBalancesInFlight = null;
 function historyDate(id, fallback){
   var el=document.getElementById(id); if(!el) return fallback;
   if(!el.value) el.value=fallback;
@@ -322,7 +303,7 @@ function setHistoryRange(mode, button){
     historyDate("dailyFrom",localDay(new Date(Date.now()-29*86400000)));
     historyDate("dailyTo",localDay());
   }
-  if(button) loadServerHistory();
+  if(button) loadServerHistory(null,true);
 }
 function historyBounds(){
   var today=localDay();
@@ -344,36 +325,39 @@ function historyQuery(includeFilters){
   }
   return params.join("&");
 }
-function loadServerHistory(){
-  if(historyLoading)return historyLoading;
-  var bounds=historyBounds(), from=bounds.from, to=bounds.to;
+function loadServerHistory(button, force){
+  if(historyLoading&&!force)return historyLoading;
+  var requestSeq=++historyRequestSeq;
+  if(button)setBusy(button,true,"读取中…");
+  var bounds=historyBounds(), from=bounds.from, to=bounds.to, requestRange=historyQuery(true);
   var status=document.getElementById("historyStatus"); if(status)status.textContent="正在读取服务器 SQLite 历史…";
-  historyLoading=fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+historyQuery(true),{},10000)
+  serverHistoryError="";historyTruncated=false;
+  historyLoading=fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+requestRange,{cache:"no-store"},10000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
-    .then(function(body){serverHistory=Array.isArray(body.items)?body.items:[];if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+bounds.label+"，"+from+" 至 "+to+"）";renderDailySnapshots();return serverHistory;})
-    .catch(function(e){serverHistory=null;if(status)status.textContent="服务器历史读取失败："+e.message+"；显示本机兼容快照";renderDailySnapshotsLocal();return [];})
-    .then(function(result){historyLoading=null;return result;});
+    .then(function(body){if(requestSeq!==historyRequestSeq)return serverHistory;serverHistory=Array.isArray(body.items)?body.items:[];if(body.truncated){historyTruncated=true;}if(status)status.textContent="服务器历史："+serverHistory.length+" 条采样（"+bounds.label+"，"+from+" 至 "+to+"）"+(body.truncated?"；仅显示最新 "+body.limit+" 条":"");renderDailySnapshots();return serverHistory;})
+    .catch(function(e){if(requestSeq!==historyRequestSeq)return serverHistory;serverHistoryError=e.message;historyTruncated=false;serverHistory=[];if(status)status.textContent="服务器历史读取失败："+e.message+"；请重试";renderDailySnapshots();return [];})
+    .then(function(result){if(requestSeq===historyRequestSeq){historyLoading=null;if(button)setBusy(button,false);}return result;});
   return historyLoading;
 }
 function updateHistoryAuto(){
   if(historyRefreshTimer){clearInterval(historyRefreshTimer);historyRefreshTimer=null;}
   var seconds=Number((document.getElementById("historyAuto")||{}).value||0);
-  if(seconds>0)historyRefreshTimer=setInterval(function(){if(currentView==="daily")loadServerHistory();},seconds*1000);
+  if(seconds>0)historyRefreshTimer=setInterval(function(){if(currentView==="daily")loadServerHistory(null,true);},seconds*1000);
 }
-function onHistoryServerFilterChanged(){ renderDailySnapshots(); if(serverHistory!==null)loadServerHistory(); }
+function onHistoryServerFilterChanged(){ renderDailySnapshots(); if(serverHistory!==null)loadServerHistory(null,true); }
 function clearHistoryFilters(){
   var account=document.getElementById("dailyAccount"),accountSelect=document.getElementById("dailyAccountSelect"),provider=document.getElementById("dailyProvider"),source=document.getElementById("dailySource"),currency=document.getElementById("dailyCurrency");
   if(account)account.value=""; if(accountSelect)accountSelect.value=""; if(provider)provider.value=""; if(source)source.value=""; if(currency)currency.value="";
-  setHistoryRange("30d"); loadServerHistory();
+  setHistoryRange("30d"); loadServerHistory(null,true);
 }
 function clearServerHistory(filtered){
   var title=filtered?"确定删除当前日期和筛选条件内的服务器用量历史吗？此操作不可恢复。":"确定删除服务器上的全部用量历史吗？此操作不可恢复。";
   if(!window.confirm(title)) return;
   var query=filtered?historyQuery(true):"from=0000-01-01&to=9999-12-31";
   var clearQuery=query+(query?"&":"")+"action=clear&_="+Date.now();
-  fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+clearQuery, {method:"GET",cache:"no-store"}, 15000)
+  fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+clearQuery, {method:"DELETE",cache:"no-store"}, 15000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
-    .then(function(){return loadServerHistory();})
+    .then(function(){return loadServerHistory(null,true);})
     .then(function(){msg(filtered?"当前筛选范围的服务器历史已清空":"服务器用量历史已清空","ok");})
     .catch(function(e){msg("删除服务器历史失败："+e.message,"err");});
 }
@@ -420,6 +404,37 @@ function historyRechargeDelta(previous,current){
   var suspicious=added>Math.max(100,baseline*100);
   return {value:suspicious?null:added,suspicious:suspicious};
 }
+function chartValue(item, metric){
+  if(metric==="remaining") return item.kind==="quota"&&historyNum(item.remaining)?Number(item.remaining):null;
+  if(item.kind==="quota") return null;
+  if(metric==="used") return item.has_used&&historyNum(item.used)?Number(item.used):null;
+  return item.has_balance!==false&&historyNum(item.balance)?Number(item.balance):null;
+}
+function chartBucket(item, granularity){
+  if(granularity==="day") return String(item.day||String(item.observed_at||"").slice(0,10));
+  var date=new Date(item.observed_at);
+  if(isNaN(date.getTime())) return String(item.observed_at||"").slice(0,13);
+  return date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-"+String(date.getDate()).padStart(2,"0")+" "+String(date.getHours()).padStart(2,"0")+":00";
+}
+function renderHistoryChart(){
+  var box=document.getElementById("historyChart"),note=document.getElementById("historyChartNote"),legend=document.getElementById("historyChartLegend");
+  if(!box)return;
+  var metric=((document.getElementById("historyMetric")||{}).value||"balance"),granularity=((document.getElementById("historyGranularity")||{}).value||"day");
+  var labels={balance:"余额",used:"用量",remaining:"配额剩余"};if(legend)legend.textContent=labels[metric]||"指标";
+  var latest={};
+  historyFilteredItems().forEach(function(item){var value=chartValue(item,metric);if(value===null)return;var bucket=chartBucket(item,granularity),key=bucket+"\0"+String(item.account_key||"")+"\0"+String(item.kind||"")+"\0"+String(item.window||"");if(!latest[key]||String(item.observed_at)>String(latest[key].observed_at))latest[key]=Object.assign({},item,{_bucket:bucket,_value:value});});
+  var sums={};Object.keys(latest).forEach(function(key){var item=latest[key],entry=sums[item._bucket]||(sums[item._bucket]={label:item._bucket,value:0,count:0});entry.value+=item._value;entry.count++;});
+  var points=Object.keys(sums).sort().map(function(key){return sums[key];});
+  if(!points.length){box.innerHTML='<div class="empty-state">当前筛选范围没有可绘制的'+esc(labels[metric])+'数据。</div>';if(note)note.textContent="余额和用量需要现金余额采样，配额剩余需要配额窗口采样。";return;}
+  var width=900,height=300,left=58,right=20,top=22,bottom=42,plotW=width-left-right,plotH=height-top-bottom,min=points.reduce(function(v,p){return Math.min(v,p.value);},points[0].value),max=points.reduce(function(v,p){return Math.max(v,p.value);},points[0].value),span=max-min||Math.max(Math.abs(max)*.1,1),lo=min-span*.12,hi=max+span*.12;
+  function x(i){return points.length===1?left+plotW/2:left+i*plotW/(points.length-1);}function y(v){return top+(hi-v)/(hi-lo)*plotH;}function fmt(v){return Math.abs(v)>=1000?v.toLocaleString(undefined,{maximumFractionDigits:2}):String(Math.round(v*100)/100);}
+  var grid="",ticks=4;for(var i=0;i<=ticks;i++){var value=lo+(hi-lo)*i/ticks,yy=y(value);grid+='<line class="grid-line" x1="'+left+'" y1="'+yy.toFixed(1)+'" x2="'+(width-right)+'" y2="'+yy.toFixed(1)+'"></line><text class="axis-label" x="'+(left-8)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end">'+esc(fmt(value))+'</text>';}
+  var line=points.map(function(p,i){return (i?'L':'M')+x(i).toFixed(1)+" "+y(p.value).toFixed(1);}).join(" "),dots=points.map(function(p,i){return '<circle class="point" cx="'+x(i).toFixed(1)+'" cy="'+y(p.value).toFixed(1)+'" r="4"><title>'+esc(p.label)+" · "+esc(fmt(p.value))+" · "+p.count+" 个账号/窗口"+'</title></circle>';}).join(""),axis=points.map(function(p,i){if(points.length>12&&i%Math.ceil(points.length/8)!==0&&i!==points.length-1)return "";var label=granularity==="hour"?p.label.slice(5):p.label.slice(5);return '<text class="axis-label" x="'+x(i).toFixed(1)+'" y="'+(height-14)+'" text-anchor="middle">'+esc(label)+'</text>';}).join("");
+  var zero=(lo<0&&hi>0)?'<line class="zero-line" x1="'+left+'" y1="'+y(0).toFixed(1)+'" x2="'+(width-right)+'" y2="'+y(0).toFixed(1)+'"></line>':'';
+  box.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+esc(labels[metric])+"趋势图，"+points.length+" 个时间点"+'"><g>'+grid+zero+'</g><path class="line" d="'+line+'"></path>'+dots+'<g>'+axis+'</g></svg>';
+  if(note)note.textContent="共 "+points.length+" 个"+(granularity==="hour"?"小时":"日期")+"，合计 "+latestCount(latest)+" 个有效账号/窗口采样；多账号按当前筛选范围求和。";
+}
+function latestCount(items){var seen={};Object.keys(items).forEach(function(k){seen[items[k]._bucket+"\0"+items[k].account_key+"\0"+items[k].kind+"\0"+items[k].window]=true;});return Object.keys(seen).length;}
 function renderHistorySummary(){
   var items=historyFilteredItems(), bounds=historyBounds(), groups={}, cash={}, quota={}, accounts={}, suspiciousRechargeCount=0;
   items.forEach(function(x){
@@ -485,10 +500,12 @@ function renderHistorySummary(){
 }
 function renderServerHistory(){
   var box=document.getElementById("dailyRows");
+  if(serverHistoryError){box.innerHTML='<div class="empty-state err">服务器历史读取失败：'+esc(serverHistoryError)+'<br><button class="btn" style="margin-top:10px" onclick="loadServerHistory(this)">重试</button></div>';return;}
+  var truncationNote=historyTruncated?'<div class="tip" style="color:var(--warn);margin-bottom:8px">历史记录超过服务端展示上限，当前仅显示最新部分；周期汇总也仅基于当前返回数据。</div>':'';
   var items=historyFilteredItems();
   renderHistoryProviderOptions();
   var currencies=[]; (serverHistory||[]).forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
-  if(!items.length){box.innerHTML="暂无符合条件的服务器历史。先点击“立即查询全部”，或调整时间和筛选条件。";return;}
+  if(!items.length){box.innerHTML='<div class="empty-state">当前范围暂无服务器历史记录。点击“立即查询全部”可采集新的余额快照。</div>';return;}
   var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
   var html="<table><thead><tr><th>日期</th><th>站点地址</th><th>类型</th><th>首值</th><th>末值</th><th>变化判断</th><th>采样来源</th></tr></thead><tbody>";
   Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="";
@@ -496,53 +513,7 @@ function renderServerHistory(){
     else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,ld=historyRechargeDelta(a,b),ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ld.value!==null||ld.suspicious||ud!==null){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(ld.suspicious)change.push("总额度异常跳变，已忽略");else if(ld.value>0)change.push("总额度增加（可能充值/套餐调整） +"+historyAmount(ld.value,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
     html+="<tr><td>"+esc(a.day)+"</td><td><b>"+esc(name.base_url||"未提供站点地址")+"</b><div class='tip'>"+esc((g.provider||name.provider||"未知供应商")+" | "+(name.label||name.name||g.key))+"</div></td><td>"+esc(g.kind==="quota"?"配额 · "+extra:"余额 · "+g.currency)+"</td><td>"+(g.kind==="quota"?historyAmount(a.remaining,"积分"):historyAmount(a.balance,g.currency))+"</td><td>"+(g.kind==="quota"?historyAmount(b.remaining,"积分"):historyAmount(b.balance,g.currency))+"</td><td>"+esc(change)+"</td><td>"+esc(a.source||"manual")+" → "+esc(b.source||"manual")+"</td></tr>";
   });
-  box.innerHTML=html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。</div>";
-}
-function renderDailySnapshotsLocal(){
-  var old=serverHistory; serverHistory=null; renderDailySnapshots(); serverHistory=old;
-}
-function snapshotKey(){ return "api-balance-daily-v2"; }
-function snapshotItems(){ var x=storageGet(snapshotKey(),[]); return Array.isArray(x)?x:[]; }
-function recordSnapshot(key, result){
-  if (!result || !result.ok) return;
-  var day=localDay(), at=nowISO(), items=snapshotItems();
-  if(Array.isArray(result.quota_windows)&&result.quota_windows.length){
-    result.quota_windows.forEach(function(q){
-      if(!q||!q.window||!knownNumber(q.remaining))return;
-      var idx=-1;
-      items.forEach(function(x,i){if((x.kind||"balance")==="quota"&&x.key===key&&x.day===day&&x.window===q.window)idx=i;});
-      var remaining=Number(q.remaining), fraction=knownNumber(q.remaining_fraction)?Number(q.remaining_fraction):null;
-      if(idx<0)items.push({kind:"quota",key:key,day:day,currency:"积分",window:q.window,firstAt:at,lastAt:at,firstRemaining:remaining,lastRemaining:remaining,firstFraction:fraction,lastFraction:fraction,firstResetTime:q.reset_time||"",lastResetTime:q.reset_time||"",sampleCount:1});
-      else{var x=items[idx];x.sampleCount=(x.sampleCount||1)+1;x.lastAt=at;x.lastRemaining=remaining;x.lastFraction=fraction;x.lastResetTime=q.reset_time||x.lastResetTime||"";}
-    });
-  }else if(result.has_balance !== false){
-    var currency=displayCurrency(resultCurrency(result) || result.currency), idx=-1;
-    items.forEach(function(x,i){if((x.kind||"balance")==="balance"&&x.key===key&&x.day===day&&displayCurrency(x.currency)===currency)idx=i;});
-    var used=knownNumber(result.used)?Number(result.used):null, balance=result.has_balance===false?null:(knownNumber(result.balance)?Number(result.balance):null);
-    if(idx<0)items.push({kind:"balance",key:key,day:day,currency:currency,firstAt:at,lastAt:at,sampleCount:1,firstBalance:balance,lastBalance:balance,firstUsed:used,lastUsed:used,hasLimit:!!result.has_limit,firstLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,lastLimit:result.has_limit&&knownNumber(result.limit)?Number(result.limit):null,limit:knownNumber(result.limit)?Number(result.limit):null});
-    else{var x=items[idx];x.sampleCount=(x.sampleCount||1)+1;x.lastAt=at;x.lastBalance=balance;x.lastUsed=used;if(result.has_limit&&knownNumber(result.limit)){if(!x.hasLimit)x.firstLimit=Number(result.limit);x.hasLimit=true;x.lastLimit=Number(result.limit);x.limit=Number(result.limit);}}
-  }
-  items=items.filter(function(x){return x&&x.key&&x.day;}).slice(-2000); storageSet(snapshotKey(),items);
-}
-function snapshotHasComparison(x){ return x.sampleCount ? x.sampleCount > 1 : !!x.firstAt && !!x.lastAt && x.firstAt !== x.lastAt; }
-function snapshotUsedDelta(x){
-  if(!snapshotHasComparison(x)||!knownNumber(x.firstUsed)||!knownNumber(x.lastUsed)||Number(x.lastUsed)<Number(x.firstUsed)) return null;
-  return Number(x.lastUsed)-Number(x.firstUsed);
-}
-function snapshotRemainingDelta(x){
-  if(!snapshotHasComparison(x)||!knownNumber(x.firstRemaining)||!knownNumber(x.lastRemaining))return null;
-  return Number(x.lastRemaining)-Number(x.firstRemaining);
-}
-function snapshotAccountDetail(x, kind, currency){
-  var c=credentialByKey(x.key), name=c.label||c.name||c.provider||x.key, site=c.base_url||"未提供站点地址";
-  if(kind==="quota"){
-    var current=knownNumber(x.lastRemaining)?formatAmount(x.lastRemaining,"积分"):"—";
-    var delta=snapshotRemainingDelta(x), change=delta===null?(x.firstAt===x.lastAt?"仅一次采样":"变化不可计算"):formatAmount(delta,"积分");
-    return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前剩余 "+esc(current)+" · 日内变化 "+esc(change)+(x.lastResetTime?" · 重置 "+esc(x.lastResetTime):"")+"</div></div>";
-  }
-  var balance=knownNumber(x.lastBalance)?formatAmount(x.lastBalance,currency):"余额未知";
-  var delta=snapshotUsedDelta(x), usedState=delta!==null?"used 增量 "+formatAmount(delta,currency):(x.firstAt===x.lastAt?"仅一次采样，无法计算 used 增量":(knownNumber(x.firstUsed)&&knownNumber(x.lastUsed)?"used 发生重置，无法计算":"上游未提供 used，无法计算"));
-  return "<div><b>"+esc(name)+"</b><div class='tip'>"+esc(site)+" · 当前余额 "+esc(balance)+" · "+esc(usedState)+"</div></div>";
+  box.innerHTML=truncationNote+html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。</div>";
 }
 function resetHistorySummary(message){
   var range=document.getElementById("historySummaryRange"), breakdown=document.getElementById("historySummaryBreakdown");
@@ -552,46 +523,15 @@ function resetHistorySummary(message){
   if(breakdown)breakdown.textContent=message||"周期总览需要服务器 SQLite 历史数据。";
 }
 function renderDailySnapshots(){
-  if (serverHistory !== null) { renderHistorySummary(); renderServerHistory(); return; }
-  resetHistorySummary("服务器历史读取失败，当前显示本机兼容快照；周期总览需要服务器 SQLite 历史数据。");
-  var box=document.getElementById("dailyRows"), q=((document.getElementById("dailyAccount")||{}).value||"").trim().toLowerCase(), items=snapshotItems();
-  var cur=((document.getElementById("dailyCurrency")||{}).value||"").trim().toUpperCase();
-  items=items.filter(function(x){var c=credentialByKey(x.key);return (!q||accountText(c).indexOf(q)>=0||String(x.key).toLowerCase().indexOf(q)>=0)&&(!cur||displayCurrency(x.currency)===cur);});
-  var currencies=[]; snapshotItems().forEach(function(x){var c=displayCurrency(x.currency);if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
-  if(!items.length){box.innerHTML="暂无符合条件的快照。查询成功后会记录每个账号每天的首末快照。";return;}
-  var groups={}; items.forEach(function(x){
-    var kind=x.kind||"balance", window=kind==="quota"?(x.window||"GLM 配额"):"余额", displayCur=displayCurrency(x.currency), k=x.day+"\0"+kind+"\0"+displayCur+"\0"+window;
-    var g=groups[k]||(groups[k]={day:x.day,kind:kind,currency:displayCur,window:window,count:0,items:[],balanceChange:0,balanceKnown:true,currentBalance:0,currentBalanceKnown:true,limitChange:0,limitKnown:true,used:0,usedKnown:true,usedReset:false,sampleOnly:0,comparisonCount:0,remainingChange:0,remainingKnown:true,currentRemaining:0,currentRemainingKnown:true,firstRemainingKnown:true,firstRemaining:0,lastRemaining:0,lastResetTime:""});
-    g.count++;g.items.push(x);if(snapshotHasComparison(x))g.comparisonCount++;else g.sampleOnly++;
-    if(kind==="quota"){
-      var d=snapshotRemainingDelta(x);if(d===null&&snapshotHasComparison(x))g.remainingKnown=false;else if(d!==null)g.remainingChange+=d;
-      if(knownNumber(x.firstRemaining))g.firstRemaining+=Number(x.firstRemaining);else g.firstRemainingKnown=false;
-      if(knownNumber(x.lastRemaining)){g.lastRemaining+=Number(x.lastRemaining);g.currentRemaining+=Number(x.lastRemaining);}else{g.remainingKnown=false;g.currentRemainingKnown=false;}
-      g.lastResetTime=x.lastResetTime||g.lastResetTime;
-    }else{
-      if(knownNumber(x.lastBalance))g.currentBalance+=Number(x.lastBalance);else g.currentBalanceKnown=false;
-      if(snapshotHasComparison(x)&&knownNumber(x.firstBalance)&&knownNumber(x.lastBalance))g.balanceChange+=Number(x.lastBalance)-Number(x.firstBalance);else if(snapshotHasComparison(x))g.balanceKnown=false;
-      if(snapshotHasComparison(x)&&knownNumber(x.firstLimit)&&knownNumber(x.lastLimit))g.limitChange+=Number(x.lastLimit)-Number(x.firstLimit);else if(snapshotHasComparison(x)&&x.hasLimit)g.limitKnown=false;
-      var usedDelta=snapshotUsedDelta(x);if(usedDelta===null&&snapshotHasComparison(x)){g.usedKnown=false;if(knownNumber(x.firstUsed)&&knownNumber(x.lastUsed))g.usedReset=true;}else if(usedDelta!==null)g.used+=usedDelta;
-    }
-  });
-  var html="<table><thead><tr><th>日期</th><th>类型</th><th>币种 / 窗口</th><th>账号数</th><th>当前余额 / 剩余</th><th>日内变化</th><th>每日 used / 状态</th></tr></thead><tbody>";
-  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k], details="<details class='daily-detail'><summary>查看账号明细</summary>"+g.items.map(function(x){return snapshotAccountDetail(x,g.kind,g.currency);}).join("")+"</details>";
-    if(g.kind==="quota"){
-      var current=g.currentRemainingKnown?formatAmount(g.currentRemaining,"积分"):"剩余未知", change=g.comparisonCount===0?"仅一次采样":(g.remainingKnown?formatAmount(g.remainingChange,"积分"):"变化不可计算"), range=g.firstRemainingKnown&&g.remainingKnown?formatAmount(g.firstRemaining,"积分")+" → "+formatAmount(g.lastRemaining,"积分"):"首末快照不完整";
-      html+="<tr><td>"+esc(g.day)+"</td><td>GLM 配额</td><td>"+esc(g.window)+"<div class='tip'>首末："+esc(range)+"</div></td><td>"+g.count+"</td><td>"+current+details+"</td><td>"+change+"</td><td>"+(g.lastResetTime?"重置 "+esc(g.lastResetTime):"未提供重置时间")+"</td></tr>";
-    }else{
-      var currencyLabel=esc(g.currency), current=g.currentBalanceKnown?formatAmount(g.currentBalance,g.currency):"余额未知", balanceChange=g.comparisonCount===0?"仅一次采样":(g.balanceKnown?formatAmount(g.balanceChange,g.currency):"变化不可计算"), limitText=g.comparisonCount===0?"仅一次采样":(g.limitKnown?formatAmount(g.limitChange,g.currency):"限额变化不可计算"), usedText=g.comparisonCount===0?"仅一次采样，无法计算 used 增量":(g.usedKnown?formatAmount(g.used,g.currency):g.usedReset?"used 发生重置，无法计算":"上游未提供 used，无法计算");
-      html+="<tr><td>"+esc(g.day)+"</td><td>现金余额</td><td>"+currencyLabel+"</td><td>"+g.count+"</td><td>"+current+details+"</td><td>"+balanceChange+"<div class='tip'>"+limitText+"</div></td><td>"+usedText+"</td></tr>";
-    }
-  });
-  box.innerHTML=html+"</tbody></table><div class='tip'>当前余额是当天最后一次成功查询值；日内变化是首末快照之差。单次查询、币种缺失、used 未提供或发生重置都会单独标明，不会按 0 处理。</div>";
+  if (serverHistory === null) { resetHistorySummary("正在读取服务器 SQLite 历史。"); renderHistoryChart(); return; }
+  renderHistorySummary();
+  renderHistoryChart();
+  renderServerHistory();
 }
 
 function applyData(d){
   if (!d) return;
   DATA = d;
-  storageSet("api-balance-config-v1", d);
   var urlInput = document.getElementById("cpaurl");
   if (urlInput && d.management_url && !urlInput.value) urlInput.value = d.management_url;
   var note = d.providers_note || "";
@@ -600,20 +540,11 @@ function applyData(d){
   renderProviders(d);
   renderForms();
 }
-function restoreCachedData(){
-  var cached=storageGet("api-balance-config-v1", null);
-  if (!cached || !Array.isArray(cached.credentials)) {
-    document.getElementById("selectedRows").innerHTML='<tr><td colspan="4" class="tip">暂无账号配置缓存，请到“账号配置”手动刷新</td></tr>';
-    return Promise.resolve([]);
-  }
-  applyData(cached);
-  return Promise.resolve([]);
-}
 function refreshAccountConfig(button){ return loadData(button); }
 function loadData(button){
   setBusy(button, true, "刷新中…");
   msg("正在刷新供应商列表…", "");
-  return fetchTimeout("/v0/resource/plugins/api-balance/config-data", {}, 10000).then(function(r){
+  return fetchTimeout("/v0/resource/plugins/api-balance/config-data", {cache:"no-store"}, 10000).then(function(r){
     if (r.status === 404) { loadError("数据端点不存在（404）：当前运行的插件还是旧版本。请到 插件商店 把 api-balance 更新到最新版，然后刷新本页。"); return null; }
     if (!r.ok) { loadError("加载数据失败（HTTP " + r.status + "），请刷新重试。"); return null; }
     return r.json().catch(function(){ throw new Error("服务器返回的不是有效 JSON"); });
@@ -623,6 +554,41 @@ function loadData(button){
     msg("供应商列表已刷新", "ok");
   }).catch(function(e){ loadError("加载数据失败：" + e.message + "。若长时间无响应，请确认已更新插件到最新版后刷新本页。"); })
     .then(function(){ setBusy(button, false); });
+}
+function serverHistoryResult(item){
+  if(item.kind === "quota") return {ok:true,has_balance:false,quota_windows:[{window:item.window||"配额",remaining:item.remaining,remaining_fraction:item.remaining_fraction,reset_time:item.reset_time||""}],fetched_at:item.observed_at};
+  return {ok:true,has_balance:item.has_balance!==false,has_used:item.has_used===true,has_limit:item.has_limit===true,balance:item.balance,used:item.used,limit:item.limit,currency:item.currency,fetched_at:item.observed_at};
+}
+function loadServerBalances(){
+  var keys=credentialRows().filter(function(c){return displaySel[c.key];}).map(function(c){return c.key;});
+  if(!keys.length){renderSelectedBalances();return Promise.resolve([]);}
+  var status=document.getElementById("globalMsg");
+  if(status)status.textContent="正在读取服务器余额快照…";
+  return fetchTimeout("/v0/resource/plugins/api-balance/usage-latest",{cache:"no-store"},10000)
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
+    .then(function(body){
+      var wanted={}; keys.forEach(function(key){wanted[key]=true;});
+      var latest={};
+      (Array.isArray(body.items)?body.items:[]).forEach(function(item){
+        var key=String(item.account_key||""); if(!wanted[key])return;
+        if(item.kind === "quota"){
+          var quota=latest[key];
+          if(!quota||!Array.isArray(quota.quota_windows))quota={ok:true,has_balance:false,quota_windows:[],fetched_at:item.observed_at};
+          if(!quota.quota_windows.some(function(q){return q.window===item.window;}))quota.quota_windows.push({window:item.window||"配额",remaining:item.remaining,remaining_fraction:item.remaining_fraction,reset_time:item.reset_time||""});
+          latest[key]=quota;
+        }else if(!latest[key])latest[key]=serverHistoryResult(item);
+      });
+      keys.forEach(function(key){if(latest[key])balanceCache[key]=latest[key];else balanceCache[key]={ok:false,message:"服务器暂无该账号的 SQLite 余额快照"};});
+      renderProviderRows();
+      if(status)status.textContent="已读取服务器余额快照";
+      return keys.map(function(key){return balanceCache[key];});
+    })
+    .catch(function(e){
+      keys.forEach(function(key){balanceCache[key]={ok:false,message:"服务器 SQLite 余额快照读取失败："+e.message};});
+      renderSelectedBalances();
+      if(status)status.textContent="服务器余额快照读取失败："+e.message;
+      return [];
+    });
 }
 function renderCredentials(d){
   var list = d.credentials || [];
@@ -660,7 +626,7 @@ function renderProviders(d){
   if(!displaySelInitialized){
     displaySelInitialized=true;
     displaySel={};
-    var saved=Array.isArray(d.config&&d.config.selected_credentials)?d.config.selected_credentials:storageGet("api-balance-display-v1",null);
+    var saved=Array.isArray(d.config&&d.config.selected_credentials)?d.config.selected_credentials:null;
     if(Array.isArray(saved)) saved.forEach(function(name){displaySel[name]=true;});
     else if(d.config&&Array.isArray(d.config.providers)&&d.config.providers.length) list.forEach(function(c){if(d.config.providers.indexOf(c.provider)>=0)displaySel[c.key]=true;});
     else list.forEach(function(c){if(c.status==="ok")displaySel[c.key]=true;});
@@ -708,7 +674,7 @@ function togglePick(key,on){
   if(on&&form){form.classList.add("focus-config");if(form.scrollIntoView)form.scrollIntoView({behavior:"smooth",block:"center"});}
 }
 function toggleDisplay(key,on){
-  if(on) displaySel[key]=true; else delete displaySel[key]; storageSet("api-balance-display-v1",Object.keys(displaySel));
+  if(on) displaySel[key]=true; else delete displaySel[key];
   renderSelectedBalances();
 }
 function balanceCells(key){ return ["bal-","selected-bal-"].map(function(prefix){return document.getElementById(prefix+domKey(key));}).filter(Boolean); }
@@ -717,7 +683,7 @@ function renderBalanceResult(key,result){
   balanceCells(key).forEach(function(cell){
     var stamp=result&&result.fetched_at?new Date(result.fetched_at).toLocaleString():"时间未知";
     if(!result||!result.ok){cell.innerHTML='<span class="tag no">查询失败</span><div class="tip err">'+esc((result&&result.message)||"请检查配置")+' · '+esc(stamp)+'</div>';return;}
-    var lines=[]; if(result.has_balance!==false&&knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
+    var lines=[]; if(Array.isArray(result.quota_windows)&&result.quota_windows.length)result.quota_windows.forEach(function(q){if(q&&knownNumber(q.remaining))lines.push((q.window||"配额")+" 剩余 "+formatAmount(q.remaining,"积分"));}); if(result.has_balance!==false&&knownNumber(result.balance))lines.push("余额 "+formatAmount(result.balance,result.currency));
     if(result.has_limit&&knownNumber(result.limit))lines.push("总额 "+formatAmount(result.limit,result.currency));
     if(result.has_used&&knownNumber(result.used))lines.push("当前 used "+formatAmount(result.used,result.currency));
     var detail=lines.length?lines.join(" · "):(result.description||"查询成功"); cell.innerHTML='<span class="tag ok balance-detail">'+esc(detail)+'</span>';
@@ -734,10 +700,10 @@ function fetchBalance(key){
   var cached=balanceCache[key]; if(cached)renderBalanceResult(key,cached);
   if(!inFlight[key]) balanceCells(key).forEach(function(cell){cell.innerHTML='<span class="tag todo">查询中</span>';});
   if(inFlight[key]) return inFlight[key]; var c=credentialByKey(key);
-  inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{},30000)
+  inFlight[key]=fetchTimeout("/v0/resource/plugins/api-balance/config-wizard?balance="+encodeURIComponent(c.provider)+"&credential_key="+encodeURIComponent(key),{cache:"no-store"},30000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(res){return {httpOK:r.ok,body:res};});})
-    .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;recordSnapshot(key,res);}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
-    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;storageSet("api-balance-balance-v1",balanceCache);renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
+    .then(function(result){var res=result.body||{};res.fetched_at=nowISO();queried[key]=true;if(result.httpOK&&res.ok){balanceCache[key]=res;}else{res.ok=false;res.message=res.message||(result.httpOK?"请检查配置":"HTTP 请求失败");balanceCache[key]=res;}renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
+    .catch(function(e){var res={ok:false,message:e.message,fetched_at:nowISO()};queried[key]=true;balanceCache[key]=res;renderBalanceResult(key,res);updateOverview(DATA&&DATA.providers);return res;})
     .then(function(res){delete inFlight[key];return res;}); return inFlight[key];
 }
 function fetchSingleBalance(key, button){
@@ -763,10 +729,12 @@ function fetchSelectedBalances(button){
   });
 }
 function fetchAllBalances(button){
+  if(allBalancesInFlight)return allBalancesInFlight;
   var names = credentialRows().map(function(c){ return c.key; });
-  if (!names.length) { msg("当前没有可查询的账号/站点", ""); return; }
+  if (!names.length) { msg("当前没有可查询的账号/站点", ""); return Promise.resolve([]); }
   setBusy(button, true, "查询中…"); msg("正在查询 " + names.length + " 个账号/站点余额…", "");
-  Promise.all(names.map(fetchBalance)).then(function(){ renderProviderRows(); if(serverHistory !== null) loadServerHistory(); msg("余额查询完成，结果已更新", "ok"); setBusy(button, false); }, function(e){ msg("余额查询失败：" + e.message, "err"); setBusy(button, false); });
+  allBalancesInFlight=Promise.all(names.map(fetchBalance)).then(function(results){ renderProviderRows(); if(serverHistory !== null) loadServerHistory(null,true); msg("余额查询完成，结果已更新", "ok"); return results; }, function(e){ msg("余额查询失败：" + e.message, "err"); throw e; }).finally(function(){setBusy(button, false);allBalancesInFlight=null;});
+  return allBalancesInFlight;
 }
 
 function renderForms(){
@@ -785,7 +753,7 @@ function renderForms(){
       '<div class="row"><div><label>balance_path</label><input class="f-bal"></div><div><label>currency_path</label><input class="f-cur"></div><div><label>plan_path</label><input class="f-plan"></div></div>' +
       '<div class="row"><div><label>limit_path</label><input class="f-lim"></div><div><label>used_path</label><input class="f-used"></div><div><label>used_scale</label><input class="f-scale" value="1"></div></div>' +
       '<div class="row"><div><label>balance_scale</label><input class="f-bscale" value="1"></div><div><label>limit_scale</label><input class="f-lscale" value="1"></div></div></details>' +
-      '<button class="btn primary" style="margin-top:10px" onclick="saveAll()">保存到 CPA</button></div>';
+      '<button class="btn primary" style="margin-top:10px" onclick="saveAll(this)">保存到 CPA</button></div>';
   });
   box.innerHTML = html;
   names.forEach(function(key){
@@ -864,30 +832,34 @@ function collectConfig(){
   if (defBase && !cfg.profiles["default"]) cfg.profiles["default"] = {base_url:defBase};
   return cfg;
 }
-function saveSelection(){
-  if (DATA && !DATA.management_configured) { showKeySetup(); document.getElementById("selectionMsg").textContent = "请先设置管理密钥"; return; }
+function saveSelection(button){
+  if (DATA && !DATA.management_configured) { showKeySetup(); document.getElementById("selectionMsg").textContent = "请先设置管理密钥"; return Promise.resolve(false); }
+  if(button&&button.disabled)return Promise.resolve(false);
+  if(button)setBusy(button,true,"保存中…");
   var cfg = collectConfig();
-  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
-  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000).then(function(r){ return r.json(); }).then(function(r){
+  return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard", {method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)}, 15000).then(function(r){ return r.json(); }).then(function(r){
     var m = document.getElementById("selectionMsg"); m.textContent = r.message || ""; m.className = r.ok ? "ok" : "err";
     if (r.ok) { DATA.config=cfg; displaySelInitialized = false; applyData(DATA); }
-  }).catch(function(e){ document.getElementById("selectionMsg").textContent = "保存失败：" + e.message; });
+    return !!r.ok;
+  }).catch(function(e){ document.getElementById("selectionMsg").textContent = "保存失败：" + e.message; return false; }).finally(function(){if(button)setBusy(button,false);});
 }
-function saveAll(){
+function saveAll(button){
   if (DATA && !DATA.management_configured) {
     showKeySetup();
     msg("保存需要 CPA 管理密钥：请在上方设置管理密钥后重试", "err");
-    return;
+    return Promise.resolve(false);
   }
+  if(button&&button.disabled)return Promise.resolve(false);
+  if(button)setBusy(button,true,"保存中…");
   var cfg = collectConfig();
-  var qs = "?save=" + encodeURIComponent(JSON.stringify(cfg));
-  fetchTimeout("/v0/resource/plugins/api-balance/config-wizard" + qs, {}, 15000)
+  return fetchTimeout("/v0/resource/plugins/api-balance/config-wizard", {method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)}, 15000)
     .then(function(r){ return r.json(); })
     .then(function(r){
       msg(r.message || "", r.ok ? "ok" : "err");
       if (r.ok) { DATA.config=cfg; displaySelInitialized = false; applyData(DATA); }
+      return !!r.ok;
     })
-    .catch(function(e){ msg("保存失败：" + e.message, "err"); });
+    .catch(function(e){ msg("保存失败：" + e.message, "err"); return false; }).finally(function(){if(button)setBusy(button,false);});
 }
 function showYAML(){
   document.getElementById("yamlBox").style.display = "block";
@@ -910,6 +882,6 @@ function toYAML(obj, indent){
   }
   return lines.join("\n");
 }
-restoreCachedData();
+loadData().then(loadServerBalances);
 </script>
 </div></body></html>

@@ -5,123 +5,79 @@ const fs = require('node:fs');
 
 function loadWizard(options = {}) {
   const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
-  const source = html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>')).replace(/\nloadData\(\);\s*$/, '\n');
-  const values = new Map();
+  const source = html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>')).replace(/\nloadData\(\)\.then\(loadServerBalances\);\s*$/, '\n');
   const elements = new Map();
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {id, value:'', textContent:'', innerHTML:'', style:{display:''}, className:'', classList:{add(){}, remove(){}}, disabled:false, dataset:{}, querySelector(){ return null; }});
+    if (!elements.has(id)) elements.set(id, {id, value:'', textContent:'', innerHTML:'', style:{display:''}, hidden:false, className:'', classList:{add(){}, remove(){}, toggle(){}}, disabled:false, tabIndex:0, dataset:{}, setAttribute(){}, getAttribute(){return null;}, querySelector(){ return null; } });
     return elements.get(id);
   }
-  const localStorage = options.throwStorage ? {
-    getItem(){ throw new Error('storage disabled'); }, setItem(){ throw new Error('storage disabled'); }, removeItem(){ throw new Error('storage disabled'); }
-  } : {
-    getItem(k){ return values.has(k) ? values.get(k) : null; }, setItem(k,v){ values.set(k,String(v)); }, removeItem(k){ values.delete(k); }
-  };
   const document = {
     getElementById: element,
     querySelectorAll(){ return []; },
+    querySelector(){ return null; },
     createElement(){ return element('created'); }
   };
-  const context = {console, document, window:{localStorage}, localStorage, setTimeout, clearTimeout, Promise, URL, encodeURIComponent, decodeURIComponent, isFinite, Number, String, Math, Date, JSON};
+  const context = {console, document, window:{}, setTimeout, clearTimeout, Promise, URL, encodeURIComponent, decodeURIComponent, isFinite, Number, String, Math, Date, JSON};
   context.fetch = options.fetch || (() => Promise.reject(new Error('network disabled')));
   vm.runInNewContext(source, context, {filename:'wizard.html'});
-  return {context, values, elements, element};
+  return {context, elements, element};
 }
 
-test('snapshot is one first/last record per account, day, and currency', () => {
-  const {context, values} = loadWizard();
-  context.recordSnapshot('deepseek@a', {ok:true, balance:10, used:100, limit:100, has_limit:true, currency:'USD'});
-  context.recordSnapshot('deepseek@a', {ok:true, balance:8, used:125, limit:90, has_limit:true, currency:'USD'});
-  context.recordSnapshot('deepseek@a', {ok:true, balance:8, used:125, currency:'CNY'});
-  const records = JSON.parse(values.get('api-balance-daily-v2'));
-  assert.equal(records.length, 2);
-  const usd = records.find(x => x.currency === 'USD');
-  assert.equal(usd.firstBalance, 10);
-  assert.equal(usd.lastBalance, 8);
-  assert.equal(usd.firstLimit, 100);
-  assert.equal(usd.lastLimit, 90);
-  assert.equal(context.snapshotUsedDelta(usd), 25);
-  assert.equal(context.snapshotUsedDelta({...usd, lastUsed: 2}), null);
+test('history chart aggregates filtered server samples by day and hour', () => {
+  const {context, element} = loadWizard();
+  context.DATA = {providers:[], credentials:[{provider:'deepseek',profile_key:'a',label:'A'}], config:{}};
+  context.serverHistory = [
+    {observed_at:'2026-09-28T08:10:00Z',day:'2026-09-28',account_key:'a',provider:'deepseek',kind:'balance',currency:'USD',balance:10,used:2,has_balance:true,has_used:true},
+    {observed_at:'2026-09-28T09:10:00Z',day:'2026-09-28',account_key:'a',provider:'deepseek',kind:'balance',currency:'USD',balance:9,used:3,has_balance:true,has_used:true},
+    {observed_at:'2026-09-29T09:10:00Z',day:'2026-09-29',account_key:'a',provider:'deepseek',kind:'balance',currency:'USD',balance:8,used:4,has_balance:true,has_used:true}
+  ];
+  element('historyMetric').value = 'balance';
+  element('historyGranularity').value = 'day';
+  context.renderHistoryChart();
+  assert.match(element('historyChart').innerHTML, /2026-09/);
+  assert.match(element('historyChart').innerHTML, /<svg/);
+  element('historyGranularity').value = 'hour';
+  element('historyMetric').value = 'used';
+  context.renderHistoryChart();
+  assert.match(element('historyChartLegend').textContent, /用量/);
+  assert.match(element('historyChartNote').textContent, /小时/);
 });
 
-test('GLM quota snapshots retain first and last values per window', () => {
+test('history chart shows a clear empty state without numeric samples', () => {
   const {context, element} = loadWizard();
-  context.DATA = {providers:[], credentials:[{provider:'openai-compatible-glm',profile_key:'glm-a',label:'GLM A'}], config:{}};
-  const quota = (fiveHour, weekly) => ({ok:true,has_balance:false,quota_windows:[
-    {window:'5 小时窗口',remaining:fiveHour,remaining_fraction:fiveHour/100,reset_time:'2026-09-28T00:00:00Z'},
-    {window:'周配额',remaining:weekly,remaining_fraction:weekly/1000}
-  ]});
-  context.recordSnapshot('glm-a', quota(50, 700));
-  context.recordSnapshot('glm-a', quota(40, 650));
-  const records = context.snapshotItems();
-  assert.equal(records.length, 2);
-  const five = records.find(x => x.window === '5 小时窗口');
-  assert.equal(five.kind, 'quota');
-  assert.equal(five.firstRemaining, 50);
-  assert.equal(five.lastRemaining, 40);
-  assert.equal(context.snapshotRemainingDelta(five), -10);
-  assert.equal(five.lastResetTime, '2026-09-28T00:00:00Z');
-  context.renderDailySnapshots();
-  assert.match(element('dailyRows').innerHTML, /GLM 配额/);
-  assert.match(element('dailyRows').innerHTML, /5 小时窗口/);
-  assert.match(element('dailyRows').innerHTML, /周配额/);
-  assert.doesNotMatch(element('dailyRows').innerHTML, /余额 0/);
+  context.serverHistory = [{observed_at:'2026-09-28T08:00:00Z',day:'2026-09-28',account_key:'a',kind:'quota',remaining:50}];
+  element('historyMetric').value = 'balance';
+  context.renderHistoryChart();
+  assert.match(element('historyChart').innerHTML, /没有可绘制的余额数据/);
+});
+test('server history failure does not render browser snapshots', async () => {
+  const {context, element} = loadWizard({fetch: async () => { throw new Error('offline'); }});
+  const result = await context.loadServerHistory();
+  assert.equal(result.length, 0);
+  assert.equal(context.serverHistory.length, 0);
+  assert.match(element('dailyRows').innerHTML, /服务器历史读取失败/);
+  assert.doesNotMatch(element('dailyRows').innerHTML, /本机兼容快照/);
 });
 
-test('legacy balance snapshots remain separate from quota windows', () => {
-  const {context, values, element} = loadWizard();
-  context.DATA = {providers:[], credentials:[{provider:'openai-compatible-glm',profile_key:'a',label:'A'}], config:{}};
-  context.recordSnapshot('a', {ok:true,balance:12,currency:'CNY',used:1});
-  const legacy = JSON.parse(values.get('api-balance-daily-v2'));
-  delete legacy[0].kind;
-  values.set('api-balance-daily-v2', JSON.stringify(legacy));
-  context.recordSnapshot('a', {ok:true,has_balance:false,quota_windows:[{window:'5 小时窗口',remaining:200,remaining_fraction:0.5}]});
-  const rows = context.snapshotItems();
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].firstBalance, 12);
-  assert.equal(rows[1].firstRemaining, 200);
-  context.renderDailySnapshots();
-  assert.match(element('dailyRows').innerHTML, /现金余额/);
-  assert.match(element('dailyRows').innerHTML, /GLM 配额/);
-  assert.equal(context.snapshotRemainingDelta({...rows[1], lastRemaining:null}), null);
-});
-test('missing currency defaults to CNY across balance rendering and snapshots', () => {
-  const {context, element} = loadWizard();
-  context.DATA = {providers:[], credentials:[{provider:'relay',profile_key:'relay',label:'Relay'}], config:{}};
-  context.displaySel = {relay:true};
-  context.balanceCache.relay = {ok:true,balance:16.5336,limit:62.4968,used:45.9632,has_limit:true,has_used:true};
+test('server history hydrates the homepage without querying suppliers', async () => {
+  let calls = [];
+  const {context, element} = loadWizard({fetch: async url => {
+    calls.push(url);
+    return {ok:true, json:async () => ({items:[{observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'deepseek@a',provider:'deepseek',currency:'USD',kind:'balance',balance:8,used:125,limit:90,has_balance:true,has_used:true,has_limit:true,source:'manual'}]})};
+  }});
+  context.DATA = {providers:[{provider:'deepseek',status:'ok'}], credentials:[{provider:'deepseek',profile_key:'deepseek@a',status:'ok'}], config:{}};
+  context.displaySel = {'deepseek@a':true};
   context.renderSelectedBalances();
-  assert.match(element('selected-bal-relay').innerHTML, /CNY 16\.5336/);
-  assert.match(element('selected-bal-relay').innerHTML, /CNY 62\.4968/);
-  assert.match(element('selected-bal-relay').innerHTML, /CNY 45\.9632/);
-  context.recordSnapshot('relay', {ok:true,balance:16.5336,currency:''});
-  context.renderDailySnapshots();
-  assert.match(element('dailyRows').innerHTML, /CNY/);
+  await context.loadServerBalances();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /usage-latest/);
+  assert.doesNotMatch(calls[0], /config-wizard\?balance/);
+  assert.match(element('selected-bal-deepseek%40a').innerHTML, /USD 8/);
 });
 
-test('daily cash snapshot separates current balance from change and labels missing currency', () => {
-  const {context, element} = loadWizard();
-  context.DATA = {providers:[], credentials:[
-    {provider:'deepseek',profile_key:'usd',label:'USD account',base_url:'https://usd.test'},
-    {provider:'relay',profile_key:'unknown',label:'Relay account',base_url:'https://relay.test'}
-  ], config:{}};
-  context.recordSnapshot('usd', {ok:true,balance:10.1,used:100,currency:'USD'});
-  context.recordSnapshot('usd', {ok:true,balance:10,used:100.1,currency:'USD'});
-  context.recordSnapshot('unknown', {ok:true,balance:8.1968,used:2});
-  context.renderDailySnapshots();
-  const html = element('dailyRows').innerHTML;
-  assert.match(html, /当前余额/);
-  assert.match(html, /USD 10/);
-  assert.match(html, /CNY/);
-  assert.match(html, /CNY 8\.1968/);
-  assert.match(html, /仅一次采样，无法计算 used 增量/);
-  assert.match(html, /查看账号明细/);
-});
-
-test('storage failures do not throw or break query state', () => {
-  const {context} = loadWizard({throwStorage:true});
-  assert.doesNotThrow(() => context.recordSnapshot('x', {ok:true, balance:1, currency:'USD'}));
-  assert.equal(context.snapshotItems().length, 0);
+test('browser storage APIs are not referenced by the wizard', () => {
+  const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
+  assert.doesNotMatch(html, /localStorage|sessionStorage|storageGet|storageSet|storageRemove/);
 });
 
 test('in-flight requests are deduplicated and failures are cached', async () => {
@@ -363,8 +319,9 @@ test('server history filters build query parameters and expose scoped deletion',
   assert.match(html, /clearServerHistory\(true\)/);
   assert.match(html, /clearServerHistory\(false\)/);
   assert.match(html, /action=clear/);
-  assert.match(html, /method:"GET",cache:"no-store"/);
-  assert.ok(html.indexOf('<th>站点地址</th><th>余额 / 用量</th>') >= 0);
+  assert.match(html, /method:"DELETE",cache:"no-store"/);
+  assert.ok(html.indexOf('<caption class="sr-only">已选择账号的服务器余额快照</caption>') >= 0);
+  assert.ok(html.indexOf('<th scope="col">站点地址</th><th scope="col">余额 / 用量</th>') >= 0);
   assert.ok(html.indexOf('<th>日期</th><th>站点地址</th><th>类型</th>') >= 0);
   assert.ok(html.indexOf('id="dailyProvider"') < html.indexOf('id="dailyAccountSelect"'));
 });

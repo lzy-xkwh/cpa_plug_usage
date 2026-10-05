@@ -223,7 +223,7 @@ func saveProviderSnapshot(provider, accountKey string, result providerBalanceRes
 		_ = tx.Rollback()
 		return cause
 	}
-	currency := strings.TrimSpace(result.Currency)
+	currency := strings.ToUpper(strings.TrimSpace(result.Currency))
 	if currency == "" && len(result.QuotaWindows) == 0 {
 		currency = "CNY"
 	}
@@ -342,17 +342,49 @@ func usageHistoryWhere(req usageHistoryRequest) (string, []any) {
 	if currency := strings.ToUpper(strings.TrimSpace(req.Currency)); currency != "" {
 		switch currency {
 		case "CNY":
-			where += " AND (currency = ? OR (currency = '' AND kind = 'balance'))"
+			where += " AND (UPPER(currency) = ? OR (currency = '' AND kind = 'balance'))"
 			args = append(args, currency)
 		case "积分":
 			where += " AND kind = 'quota'"
 		default:
-			where += " AND currency = ?"
+			where += " AND UPPER(currency) = ?"
 			args = append(args, currency)
 		}
 	}
 	return where, args
 }
+
+type usageRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanUsageItem(scanner usageRowScanner) (map[string]any, string, string, error) {
+	var observedAt, day, accountKey, provider, currency, kind, window, resetTime, source string
+	var balance, used, limitValue, remaining, fraction sql.NullFloat64
+	var hasBalance, hasUsed, hasLimit int
+	if err := scanner.Scan(&observedAt, &day, &accountKey, &provider, &currency, &kind, &window, &balance, &used, &limitValue, &remaining, &fraction, &resetTime, &hasBalance, &hasUsed, &hasLimit, &source); err != nil {
+		return nil, "", "", err
+	}
+	item := map[string]any{"observed_at": observedAt, "day": day, "account_key": accountKey, "provider": provider, "currency": currency, "kind": kind, "window": window, "reset_time": resetTime, "source": source, "has_balance": hasBalance != 0, "has_used": hasUsed != 0, "has_limit": hasLimit != 0}
+	if balance.Valid {
+		item["balance"] = balance.Float64
+	}
+	if used.Valid {
+		item["used"] = used.Float64
+	}
+	if limitValue.Valid {
+		item["limit"] = limitValue.Float64
+	}
+	if remaining.Valid {
+		item["remaining"] = remaining.Float64
+	}
+	if fraction.Valid {
+		item["remaining_fraction"] = fraction.Float64
+	}
+	return item, accountKey, observedAt, nil
+}
+
+const usageSnapshotSelect = `observed_at,day,account_key,provider,currency,kind,window,balance,used,limit_value,remaining,remaining_fraction,reset_time,has_balance,has_used,has_limit,source`
 
 func clearUsageHistory(req usageHistoryRequest) error {
 	if err := openUsageStore(currentConfig()); err != nil {
@@ -381,45 +413,114 @@ func usageHistoryResponse(req usageHistoryRequest) (map[string]any, error) {
 	}
 	from, to := normalizedHistoryRange(req)
 	where, args := usageHistoryWhere(req)
-	query := `SELECT observed_at,day,account_key,provider,currency,kind,window,balance,used,limit_value,remaining,remaining_fraction,reset_time,has_balance,has_used,has_limit,source FROM usage_snapshots WHERE ` + where
-	query += " ORDER BY observed_at DESC, id DESC LIMIT 5000"
+	query := `SELECT id,` + usageSnapshotSelect + ` FROM usage_snapshots WHERE ` + where
+	query += " ORDER BY observed_at DESC, id DESC LIMIT 5001"
 	rows, err := serverUsageStore.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("读取用量历史失败: %w", err)
 	}
 	defer rows.Close()
-	items := make([]map[string]any, 0)
+	items := make([]map[string]any, 0, 5000)
+	truncated := false
 	for rows.Next() {
+		var id int64
+		var item map[string]any
+		var scanErr error
 		var observedAt, day, accountKey, provider, currency, kind, window, resetTime, source string
 		var balance, used, limitValue, remaining, fraction sql.NullFloat64
 		var hasBalance, hasUsed, hasLimit int
-		if err := rows.Scan(&observedAt, &day, &accountKey, &provider, &currency, &kind, &window, &balance, &used, &limitValue, &remaining, &fraction, &resetTime, &hasBalance, &hasUsed, &hasLimit, &source); err != nil {
-			return nil, fmt.Errorf("解析用量历史失败: %w", err)
+		if scanErr = rows.Scan(&id, &observedAt, &day, &accountKey, &provider, &currency, &kind, &window, &balance, &used, &limitValue, &remaining, &fraction, &resetTime, &hasBalance, &hasUsed, &hasLimit, &source); scanErr != nil {
+			return nil, fmt.Errorf("解析用量历史失败: %w", scanErr)
 		}
-		item := map[string]any{"observed_at": observedAt, "day": day, "account_key": accountKey, "provider": provider, "currency": currency, "kind": kind, "window": window, "reset_time": resetTime, "source": source, "has_balance": hasBalance != 0, "has_used": hasUsed != 0, "has_limit": hasLimit != 0}
-		if balance.Valid {
-			item["balance"] = balance.Float64
-		}
-		if used.Valid {
-			item["used"] = used.Float64
-		}
-		if limitValue.Valid {
-			item["limit"] = limitValue.Float64
-		}
-		if remaining.Valid {
-			item["remaining"] = remaining.Float64
-		}
-		if fraction.Valid {
-			item["remaining_fraction"] = fraction.Float64
-		}
-		items = append(items, item)
+		item = map[string]any{"observed_at": observedAt, "day": day, "account_key": accountKey, "provider": provider, "currency": currency, "kind": kind, "window": window, "reset_time": resetTime, "source": source, "has_balance": hasBalance != 0, "has_used": hasUsed != 0, "has_limit": hasLimit != 0}
+		if balance.Valid { item["balance"] = balance.Float64 }
+		if used.Valid { item["used"] = used.Float64 }
+		if limitValue.Valid { item["limit"] = limitValue.Float64 }
+		if remaining.Valid { item["remaining"] = remaining.Float64 }
+		if fraction.Valid { item["remaining_fraction"] = fraction.Float64 }
+		if len(items) < 5000 { items = append(items, item) } else { truncated = true }
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"from": from, "to": to, "items": items}, nil
+	return map[string]any{"from": from, "to": to, "items": items, "truncated": truncated, "limit": 5000}, nil
 }
 
+func usageLatestWhere(req usageHistoryRequest) (string, []any) {
+	where := "1=1"
+	args := make([]any, 0, 4)
+	if key := strings.TrimSpace(req.Key); key != "" {
+		where += " AND account_key = ?"
+		args = append(args, key)
+	}
+	if provider := strings.TrimSpace(req.Provider); provider != "" {
+		where += " AND provider = ?"
+		args = append(args, provider)
+	}
+	if source := strings.TrimSpace(req.Source); source != "" {
+		where += " AND source = ?"
+		args = append(args, source)
+	}
+	if currency := strings.ToUpper(strings.TrimSpace(req.Currency)); currency != "" {
+		switch currency {
+		case "CNY":
+			where += " AND (UPPER(currency) = ? OR (currency = '' AND kind = 'balance'))"
+			args = append(args, currency)
+		case "积分":
+			where += " AND kind = 'quota'"
+		default:
+			where += " AND UPPER(currency) = ?"
+			args = append(args, currency)
+		}
+	}
+	return where, args
+}
+
+func usageLatestResponse(req usageHistoryRequest) (map[string]any, error) {
+	if err := openUsageStore(currentConfig()); err != nil {
+		return nil, err
+	}
+	serverUsageStore.mu.Lock()
+	defer serverUsageStore.mu.Unlock()
+	if serverUsageStore.db == nil {
+		return nil, fmt.Errorf("SQLite 尚未打开")
+	}
+	where, args := usageLatestWhere(req)
+	query := `SELECT ` + usageSnapshotSelect + ` FROM usage_snapshots WHERE ` + where + ` ORDER BY account_key ASC, observed_at DESC, id DESC`
+	rows, err := serverUsageStore.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("读取最新用量失败: %w", err)
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	latestAt := make(map[string]string)
+	for rows.Next() {
+		item, accountKey, observedAt, err := scanUsageItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("解析最新用量失败: %w", err)
+		}
+		if at, ok := latestAt[accountKey]; ok {
+			if at != observedAt {
+				continue
+			}
+		} else {
+			latestAt[accountKey] = observedAt
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("读取最新用量失败: %w", err)
+	}
+	return map[string]any{"items": items}, nil
+}
+
+func marshalLatestUsage(req usageHistoryRequest) ([]byte, error) {
+	result, err := usageLatestResponse(req)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(result)
+}
 func marshalUsageHistory(req usageHistoryRequest) ([]byte, error) {
 	result, err := usageHistoryResponse(req)
 	if err != nil {

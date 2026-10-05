@@ -80,3 +80,74 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             dist/*
+
+  registry:
+    name: Update plugin registry
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'api-balance_*_linux_*.zip' \
+            --dir dist
+
+      - name: Update registry checksums
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          amd64="dist/api-balance_${version}_linux_amd64.zip"
+          arm64="dist/api-balance_${version}_linux_arm64.zip"
+          test -f "$amd64"
+          test -f "$arm64"
+          amd64_sha="$(sha256sum "$amd64" | awk '{print $1}')"
+          arm64_sha="$(sha256sum "$arm64" | awk '{print $1}')"
+          jq \
+            --arg version "$version" \
+            --arg repo "$REPOSITORY" \
+            --arg amd64_sha "$amd64_sha" \
+            --arg arm64_sha "$arm64_sha" \
+            '(.plugins[] | select(.id == "api-balance")) |= (
+               .version = $version |
+               .install.artifacts |= map(
+                 if .goos == "linux" and .goarch == "amd64" then
+                   .url = ("https://github.com/" + $repo + "/releases/download/v" + $version + "/api-balance_" + $version + "_linux_amd64.zip") |
+                   .sha256 = $amd64_sha
+                 elif .goos == "linux" and .goarch == "arm64" then
+                   .url = ("https://github.com/" + $repo + "/releases/download/v" + $version + "/api-balance_" + $version + "_linux_arm64.zip") |
+                   .sha256 = $arm64_sha
+                 else . end
+               )
+             )' registry.json > registry.json.tmp
+          mv registry.json.tmp registry.json
+          jq empty registry.json
+
+      - name: Commit registry update
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- registry.json; then
+            echo "registry.json is already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add registry.json
+          git commit -m "chore: publish ${VERSION} registry metadata"
+          git push origin HEAD:main

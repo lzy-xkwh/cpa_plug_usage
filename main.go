@@ -443,6 +443,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 					"path":        "/usage-history",
 					"description": "读取服务端 SQLite 中的用量历史",
 				},
+				{
+					"path":        "/usage-latest",
+					"description": "读取每个账号最新的服务端 SQLite 用量观测",
+				},
 			},
 		}), nil
 	case "management.handle":
@@ -457,7 +461,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.22",
+			Version:          "0.9.23",
 			Author:           "community",
 			GitHubRepository: "https://github.com/lzy-xkwh/cpa_plug_usage",
 			ConfigFields: []configField{
@@ -1893,12 +1897,25 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		result := fetchProviderBalance(provider, credentialKey)
 		if result.OK {
 			if err := saveProviderSnapshot(provider, credentialKey, result, "manual", time.Now()); err != nil {
+				result.OK = false
 				result.Message = "余额查询成功，但保存 SQLite 快照失败: " + err.Error()
 			}
 		}
 		payload, err := json.Marshal(result)
 		if err != nil {
 			return nil, fmt.Errorf("编码余额结果失败: %w", err)
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
+	}
+	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/usage-latest") {
+		var latestReq usageHistoryRequest
+		latestReq.Key = firstQuery(req.Query, "key")
+		latestReq.Provider = firstQuery(req.Query, "provider")
+		latestReq.Source = firstQuery(req.Query, "source")
+		latestReq.Currency = firstQuery(req.Query, "currency")
+		payload, err := marshalLatestUsage(latestReq)
+		if err != nil {
+			return nil, err
 		}
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
@@ -1919,6 +1936,16 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		payload, err := marshalUsageHistory(historyReq)
 		if err != nil {
 			return nil, err
+		}
+		return okEnvelope(managementJSONResponse(payload)), nil
+	}
+	if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/config-wizard") && req.Method == http.MethodPost {
+		if len(bytes.TrimSpace(req.Body)) == 0 {
+			return okEnvelope(managementJSONResponse([]byte(`{"ok":false,"message":"请求体不能为空"}`))), nil
+		}
+		payload, err := json.Marshal(saveConfigViaManagementAPI(string(req.Body)))
+		if err != nil {
+			return nil, fmt.Errorf("编码保存结果失败: %w", err)
 		}
 		return okEnvelope(managementJSONResponse(payload)), nil
 	}
@@ -1957,7 +1984,7 @@ type managementResponse struct {
 func managementJSONResponse(payload []byte) managementResponse {
 	return managementResponse{
 		StatusCode: 200,
-		Headers:    map[string][]string{"Content-Type": {"application/json; charset=utf-8"}},
+		Headers:    map[string][]string{"Content-Type": {"application/json; charset=utf-8"}, "Cache-Control": {"no-store"}},
 		Body:       payload,
 	}
 }
