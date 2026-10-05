@@ -23,6 +23,12 @@ function loadWizard(options = {}) {
   return {context, elements, element};
 }
 
+test('server balance snapshots restore the homepage quota progress', () => {
+  const {context} = loadWizard();
+  const result = context.serverHistoryResult({kind:'balance',has_balance:true,has_used:true,has_limit:true,balance:25,used:75,limit:100,currency:'USD'});
+  assert.equal(result.fraction, 0.25);
+  assert.equal(result.has_limit, true);
+});
 test('history chart aggregates filtered server samples by day and hour', () => {
   const {context, element} = loadWizard();
   context.DATA = {providers:[], credentials:[{provider:'deepseek',profile_key:'a',label:'A'}], config:{}};

@@ -557,7 +557,9 @@ function loadData(button){
 }
 function serverHistoryResult(item){
   if(item.kind === "quota") return {ok:true,has_balance:false,quota_windows:[{window:item.window||"配额",remaining:item.remaining,remaining_fraction:item.remaining_fraction,reset_time:item.reset_time||""}],fetched_at:item.observed_at};
-  return {ok:true,has_balance:item.has_balance!==false,has_used:item.has_used===true,has_limit:item.has_limit===true,balance:item.balance,used:item.used,limit:item.limit,currency:item.currency,fetched_at:item.observed_at};
+  var result={ok:true,has_balance:item.has_balance!==false,has_used:item.has_used===true,has_limit:item.has_limit===true,balance:item.balance,used:item.used,limit:item.limit,currency:item.currency,fetched_at:item.observed_at};
+  if(result.has_limit&&knownNumber(result.limit)&&Number(result.limit)>0&&result.has_balance&&knownNumber(result.balance))result.fraction=Math.max(0,Math.min(1,Number(result.balance)/Number(result.limit)));
+  return result;
 }
 function loadServerBalances(){
   var keys=credentialRows().filter(function(c){return displaySel[c.key];}).map(function(c){return c.key;});
