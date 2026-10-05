@@ -29,6 +29,21 @@ test('server balance snapshots restore the homepage quota progress', () => {
   assert.equal(result.fraction, 0.25);
   assert.equal(result.has_limit, true);
 });
+test('usage chart shows incremental usage per day instead of cumulative used totals', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-09-28T08:00:00Z',day:'2026-09-28',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',used:100,has_used:true},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',used:130,has_used:true},
+    {observed_at:'2026-09-29T08:00:00Z',day:'2026-09-29',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',used:150,has_used:true}
+  ];
+  element('historyMetric').value = 'used';
+  element('historyGranularity').value = 'day';
+  context.renderHistoryChart();
+  assert.match(element('historyChartNote').textContent, /用量增量/);
+  assert.match(element('historyChart').innerHTML, /2026-09/);
+  assert.match(element('historyChart').innerHTML, /· 30 ·/);
+  assert.doesNotMatch(element('historyChart').innerHTML, /· 130 ·/);
+});
 test('history chart aggregates filtered server samples by day and hour', () => {
   const {context, element} = loadWizard();
   context.DATA = {providers:[], credentials:[{provider:'deepseek',profile_key:'a',label:'A'}], config:{}};
