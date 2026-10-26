@@ -249,7 +249,8 @@ test('deleting one abnormal sample calls the history API with its id', async () 
   const removed = await context.deleteUsageSnapshot(null, 4821);
   assert.equal(removed, true);
   assert.equal(calls.length, 2);              // 删除 + 重新读取历史
-  assert.equal(calls[0].method, 'DELETE');
+  // 宿主只把 GET 转发给插件资源路由，DELETE 会拿到 404。
+  assert.equal(calls[0].method, 'GET');
   assert.match(calls[0].url, /usage-history\?id=4821&action=clear/);
 });
 test('history summary uses filtered first and last values per account', () => {
@@ -425,11 +426,29 @@ test('server history filters build query parameters and expose scoped deletion',
   assert.match(html, /clearServerHistory\(true\)/);
   assert.match(html, /clearServerHistory\(false\)/);
   assert.match(html, /action=clear/);
-  assert.match(html, /method:"DELETE",cache:"no-store"/);
+  assert.match(html, /method:"GET",cache:"no-store"/);
   assert.ok(html.indexOf('<caption class="sr-only">已选择账号的服务器余额快照</caption>') >= 0);
   assert.ok(html.indexOf('<th scope="col">站点地址</th><th scope="col">余额 / 用量</th>') >= 0);
   assert.ok(html.indexOf('<th>日期</th><th>站点地址</th><th>类型</th>') >= 0);
   assert.ok(html.indexOf('id="dailyProvider"') < html.indexOf('id="dailyAccountSelect"'));
+});
+
+test('history clearing uses the GET resource route instead of DELETE', async () => {
+  const calls = [];
+  const {context, element} = loadWizard({fetch: async (url, opts) => {
+    calls.push({url, method: (opts||{}).method});
+    return {ok:true, json:async () => ({items:[]})};
+  }});
+  context.window.confirm = () => true;
+  context.serverHistory = [];
+  context.historyRange = 'custom';
+  element('dailyFrom').value = '2026-09-01';
+  element('dailyTo').value = '2026-09-07';
+  context.clearServerHistory(true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(calls.length > 0, true);
+  assert.equal(calls[0].method, 'GET');
+  assert.match(calls[0].url, /usage-history\?from=2026-09-01&to=2026-09-07&action=clear/);
 });
 
 test('server history rows lead with provider and separate account and site', () => {

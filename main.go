@@ -461,7 +461,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.25",
+			Version:          "0.9.26",
 			Author:           "community",
 			GitHubRepository: "https://github.com/lzy-xkwh/cpa_plug_usage",
 			ConfigFields: []configField{

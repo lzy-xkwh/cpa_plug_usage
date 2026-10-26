@@ -355,7 +355,7 @@ function clearServerHistory(filtered){
   if(!window.confirm(title)) return;
   var query=filtered?historyQuery(true):"from=0000-01-01&to=9999-12-31";
   var clearQuery=query+(query?"&":"")+"action=clear&_="+Date.now();
-  fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+clearQuery, {method:"DELETE",cache:"no-store"}, 15000)
+  fetchTimeout("/v0/resource/plugins/api-balance/usage-history?"+clearQuery, {method:"GET",cache:"no-store"}, 15000)
     .then(function(r){return r.json().catch(function(){return {};}).then(function(body){if(!r.ok)throw new Error("HTTP "+r.status);return body;});})
     .then(function(){return loadServerHistory(null,true);})
     .then(function(){msg(filtered?"当前筛选范围的服务器历史已清空":"服务器用量历史已清空","ok");})
@@ -439,7 +439,7 @@ function deleteUsageSnapshot(button,id){
   if(!isFinite(value)||value<=0)return Promise.resolve(false);
   if(typeof window!=="undefined"&&window.confirm&&!window.confirm("删除这条异常采样？操作不可恢复。"))return Promise.resolve(false);
   if(button)setBusy(button,true,"删除中…");
-  return fetchTimeout("/v0/resource/plugins/api-balance/usage-history?id="+encodeURIComponent(Math.round(value))+"&action=clear&_="+Date.now(),{method:"DELETE",cache:"no-store"},15000)
+  return fetchTimeout("/v0/resource/plugins/api-balance/usage-history?id="+encodeURIComponent(Math.round(value))+"&action=clear&_="+Date.now(),{method:"GET",cache:"no-store"},15000)
     .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json().catch(function(){return {};});})
     .then(function(){return loadServerHistory(null,true);})
     .then(function(){msg("已删除这条异常采样","ok");return true;})
