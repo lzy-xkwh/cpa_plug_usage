@@ -244,6 +244,80 @@ func TestUsageHistoryCurrencyFilterMatchesLegacyLowercase(t *testing.T) {
 	}
 }
 
+func TestUsageHistoryExposesIDAndDeletesSingleSnapshot(t *testing.T) {
+	closeUsageStore()
+	oldConfig := currentConfig()
+	defer func() {
+		closeUsageStore()
+		configMu.Lock()
+		runtimeConfig = oldConfig
+		configMu.Unlock()
+	}()
+	cfg := oldConfig
+	cfg.Enabled = false
+	cfg.UsageDBPath = filepath.Join(t.TempDir(), "single-delete.db")
+	configMu.Lock()
+	runtimeConfig = cfg
+	configMu.Unlock()
+	if err := openUsageStore(cfg); err != nil {
+		t.Fatal(err)
+	}
+	serverUsageStore.mu.Lock()
+	for _, row := range [][3]string{
+		{"2026-10-01T09:00:00Z", "2026-10-01", "1"},
+		{"2026-10-02T09:00:00Z", "2026-10-02", "99999835"},
+	} {
+		if _, err := serverUsageStore.db.Exec(`INSERT INTO usage_snapshots
+		(observed_at,day,account_key,provider,currency,kind,balance,limit_value,has_balance,has_limit)
+		VALUES (?, ?, 'a', 'relay', 'CNY', 'balance', 100, ?, 1, 1)`, row[0], row[1], row[2]); err != nil {
+			serverUsageStore.mu.Unlock()
+			t.Fatal(err)
+		}
+	}
+	serverUsageStore.mu.Unlock()
+
+	result, err := usageHistoryResponse(usageHistoryRequest{From: "2026-10-01", To: "2026-10-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := result["items"].([]map[string]any)
+	if len(items) != 2 {
+		t.Fatalf("history items = %d, want 2", len(items))
+	}
+	var target int64
+	for _, item := range items {
+		id, ok := item["id"].(int64)
+		if !ok || id <= 0 {
+			t.Fatalf("history item missing numeric id: %#v", item)
+		}
+		if item["day"] == "2026-10-02" {
+			target = id
+		}
+	}
+	if err := clearUsageHistory(usageHistoryRequest{ID: target}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = usageHistoryResponse(usageHistoryRequest{From: "2026-10-01", To: "2026-10-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = result["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["day"] != "2026-10-01" {
+		t.Fatalf("history after single delete = %#v, want only 2026-10-01", items)
+	}
+	// 日期范围外的 id 也应能删除：按 id 删除时忽略 from/to。
+	if err := clearUsageHistory(usageHistoryRequest{ID: items[0]["id"].(int64), From: "2030-01-01", To: "2030-01-02"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = usageHistoryResponse(usageHistoryRequest{From: "2020-01-01", To: "2030-01-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result["items"].([]map[string]any)) != 0 {
+		t.Fatalf("history should be empty after id deletes, got %d", len(result["items"].([]map[string]any)))
+	}
+}
+
 func TestUsageStoreMigratesFingerprintColumn(t *testing.T) {
 	closeUsageStore()
 	oldConfig := currentConfig()

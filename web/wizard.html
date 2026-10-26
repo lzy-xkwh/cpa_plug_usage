@@ -38,7 +38,7 @@ label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}input,select
 
 <nav class="tabs" role="tablist" aria-label="余额中心视图"><button id="homeTab" class="tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="view-home" data-view="home" onkeydown="tabKeydown(event)" onclick="showView('home',this)">首页</button><button id="accountsTab" class="tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="accountPanel" data-view="accounts" onkeydown="tabKeydown(event)" onclick="showView('accounts',this)">账号配置</button><button id="dailyTab" class="tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-daily" data-view="daily" onkeydown="tabKeydown(event)" onclick="showView('daily',this)">用量历史</button></nav>
 <div id="view-home" class="card" role="tabpanel" aria-labelledby="homeTab" tabindex="-1"><div class="card-head"><div><h2>已选择账号余额</h2><div class="tip">进入页面只读取服务器 SQLite 最新快照，不会自动请求供应商。</div></div><div class="card-head-actions"><button class="btn primary" id="selectedBalancesBtn" onclick="fetchSelectedBalances(this)" title="重新查询已选择账号的余额">手动刷新</button></div></div><div class="tip">这里只显示在“账号配置”页勾选并保存的账号。可使用每行的“刷新”按钮单独查询，也可点击上方按钮刷新全部。</div><div class="table-scroll"><table><caption class="sr-only">已选择账号的服务器余额快照</caption><thead><tr><th scope="col">站点地址</th><th scope="col">余额 / 用量</th><th scope="col" style="width:72px">操作</th></tr></thead><tbody id="selectedRows"><tr><td colspan="3" class="tip">正在读取服务器快照…</td></tr></tbody></table></div></div>
-<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><div class="history-chart-panel"><div class="history-chart-head"><div><h3>趋势分析</h3><div class="tip">按当前筛选条件聚合服务器采样；用量显示相邻快照的新增值，计入较新采样所在日期/小时。</div></div><div class="chart-controls"><label for="historyGranularity">时间粒度<select id="historyGranularity" onchange="renderHistoryChart()"><option value="day">按天</option><option value="hour">按小时</option></select></label><label for="historyMetric">展示指标<select id="historyMetric" onchange="renderHistoryChart()"><option value="balance">余额</option><option value="used">用量增加</option><option value="remaining">配额剩余</option></select></label></div></div><div class="chart-legend"><span class="chart-legend-dot"></span><span id="historyChartLegend">余额</span></div><div id="historyChart" class="history-chart" role="img" aria-label="用量历史趋势图"><div class="empty-state">正在等待服务器历史数据…</div></div><div id="historyChartNote" class="tip history-chart-note" role="status" aria-live="polite"></div></div><div class="card-head"><h2>用量历史</h2><div class="card-head-actions"><button id="historyRefreshBtn" class="btn" onclick="loadServerHistory(this)">刷新历史</button><button id="historyQueryBtn" class="btn primary" onclick="fetchAllBalances(this)">立即查询全部</button></div></div><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务按服务器本地时间采样；余额增加只表示上游返回值变化，可能是充值、退款、赠送或套餐调整，不代表插件执行了充值。</div><div id="historyStatus" class="tip status-line" role="status" aria-live="polite">等待读取服务器历史…</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" aria-label="开始日期" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" aria-label="结束日期" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyProvider" onchange="onHistoryServerFilterChanged()"><option value="">全部提供方</option></select><select id="dailyAccountSelect" onchange="onHistoryServerFilterChanged()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、站点或来源" oninput="renderDailySnapshots()"><select id="dailySource" onchange="onHistoryServerFilterChanged()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(true)">删除当前筛选历史</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(false)">删除全部服务器历史</button><select id="dailyCurrency" onchange="onHistoryServerFilterChanged()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
+<div id="view-daily" style="display:none" class="card"><div class="history-summary"><div class="history-summary-head"><b>周期总览</b><span class="tip" id="historySummaryRange">当前日期范围及筛选条件</span></div><div class="history-summary-grid"><div class="history-metric usage"><div class="value" id="historyUsage">—</div><div class="label">用量增加</div></div><div class="history-metric recharge"><div class="value" id="historyRecharge">—</div><div class="label">总额度增加 · 可能充值/套餐调整</div></div><div class="history-metric"><div class="value" id="historyBalanceChange">—</div><div class="label">余额净变化</div></div><div class="history-metric"><div class="value" id="historyQuotaUsed">—</div><div class="label">配额消耗</div></div><div class="history-metric"><div class="value" id="historySamples">0</div><div class="label">有效采样 / 账号</div></div></div><div class="tip history-breakdown" id="historySummaryBreakdown">选择日期范围后按币种和账号汇总；数据来自实际采样，非连续采样期间的变化可能无法完整归因。</div></div><div class="history-chart-panel"><div class="history-chart-head"><div><h3>趋势分析</h3><div class="tip">按当前筛选条件聚合服务器采样；余额取各账号最近一次已知值求和，用量显示相邻快照新增值。</div></div><div class="chart-controls"><label for="historyGranularity">时间粒度<select id="historyGranularity" onchange="renderHistoryChart()"><option value="day">按天</option><option value="hour">按小时</option></select></label><label for="historyMetric">展示指标<select id="historyMetric" onchange="renderHistoryChart()"><option value="balance">余额</option><option value="used">用量增加</option><option value="remaining">配额剩余</option></select></label></div></div><div class="chart-legend"><span class="chart-legend-dot"></span><span id="historyChartLegend">余额</span></div><div id="historyChart" class="history-chart" role="img" aria-label="用量历史趋势图"><div class="empty-state">正在等待服务器历史数据…</div></div><div id="historyChartNote" class="tip history-chart-note" role="status" aria-live="polite"></div></div><div class="card-head"><h2>用量历史</h2><div class="card-head-actions"><button id="historyRefreshBtn" class="btn" onclick="loadServerHistory(this)">刷新历史</button><button id="historyQueryBtn" class="btn primary" onclick="fetchAllBalances(this)">立即查询全部</button></div></div><div class="tip">历史数据保存在 CPA 所在服务器的 SQLite 文件中。自动任务按服务器本地时间采样；余额增加只表示上游返回值变化，可能是充值、退款、赠送或套餐调整，不代表插件执行了充值。</div><div id="historyStatus" class="tip status-line" role="status" aria-live="polite">等待读取服务器历史…</div><div class="history-date-filter"><div class="quick-range" role="group" aria-label="历史时间范围"><button class="btn" data-range="today" onclick="setHistoryRange('today',this)">今天</button><button class="btn" data-range="yesterday" onclick="setHistoryRange('yesterday',this)">昨天</button><button class="btn" data-range="7d" onclick="setHistoryRange('7d',this)">7 天</button><button class="btn" data-range="14d" onclick="setHistoryRange('14d',this)">14 天</button><button class="btn active" data-range="30d" onclick="setHistoryRange('30d',this)">30 天</button><button class="btn" data-range="all" onclick="setHistoryRange('all',this)">全部</button><button class="btn" data-range="custom" onclick="setHistoryRange('custom',this)">自定义</button></div><input id="dailyFrom" aria-label="开始日期" type="date" aria-label="开始日期" onchange="setHistoryRange('custom');loadServerHistory()"><input id="dailyTo" aria-label="结束日期" type="date" aria-label="结束日期" onchange="setHistoryRange('custom');loadServerHistory()"></div><div class="filterbar"><select id="dailyProvider" onchange="onHistoryServerFilterChanged()"><option value="">全部提供方</option></select><select id="dailyAccountSelect" onchange="onHistoryServerFilterChanged()"><option value="">全部账号</option></select><input id="dailyAccount" placeholder="搜索账号、站点或来源" oninput="renderDailySnapshots()"><select id="dailySource" onchange="onHistoryServerFilterChanged()"><option value="">全部来源</option><option value="manual">手动查询</option><option value="scheduled">定时查询</option></select><select id="historyAuto" aria-label="自动刷新间隔" onchange="updateHistoryAuto()"><option value="0">自动关闭</option><option value="5">自动 · 5 秒</option></select><button class="btn" onclick="loadServerHistory()">刷新</button><button class="btn" onclick="clearHistoryFilters()">清空筛选</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(true)">删除当前筛选历史</button><button class="btn" style="color:var(--err)" onclick="clearServerHistory(false)">删除全部服务器历史</button><select id="dailyCurrency" onchange="onHistoryServerFilterChanged()"><option value="">全部币种 / 类型</option></select></div><div id="historyStatus" class="tip">正在读取服务端历史…</div><div id="dailyRows" class="tip">加载中…</div></div>
 
 <div class="card" id="setupCard" style="display:none">
 <h2>设置 / 重设 CPA 管理密钥</h2>
@@ -390,25 +390,152 @@ function historySummaryNumber(value, known, currencies){
   if(currencies.length===1) return historyAmount(value,currencies[0]);
   return currencies.length ? "多币种" : "—";
 }
+// 单条采样的数值绝对值超过该阈值时视为异常：不再参与汇总/趋势图，交给用户判断是否删除。
+var historyAnomalyLimit=10000;
+var historyAnomalyFieldsList=[["balance","余额"],["used","用量"],["limit","总额度"],["remaining","配额剩余"]];
+function historyFieldAnomalous(item,field){
+  return !!item&&historyNum(item[field])&&Math.abs(Number(item[field]))>historyAnomalyLimit;
+}
+function historyAnomalyFields(item){
+  var hits=[];
+  historyAnomalyFieldsList.forEach(function(pair){
+    if(!historyFieldAnomalous(item,pair[0]))return;
+    hits.push({field:pair[0],label:pair[1],value:Number(item[pair[0]])});
+  });
+  return hits;
+}
+function historySplitItems(items){
+  var clean=[],anomalies=[];
+  (items||[]).forEach(function(item){
+    var hits=historyAnomalyFields(item);
+    if(hits.length)anomalies.push({item:item,fields:hits});else clean.push(item);
+  });
+  return {clean:clean,anomalies:anomalies};
+}
+function historyItemCurrency(item){
+  return displayCurrency((item&&item.currency)||(((item&&item.kind)||"balance")==="quota"?"积分":""));
+}
+function historyAnomalyText(hit,currency){
+  return hit.fields.map(function(field){return field.label+" "+formatAmount(field.value,currency);}).join("、");
+}
+function historyAccountLabel(key){
+  var c=credentialByKey(key);
+  return (c.base_url||"未提供站点地址")+" · "+(c.label||c.name||key||"未命名账号");
+}
+function historyAnomalyTime(item){
+  var at=String((item&&item.observed_at)||"");
+  if(!at)return String((item&&item.day)||"");
+  var date=new Date(at);
+  if(isNaN(date.getTime()))return at;
+  return localDay(date)+" "+String(date.getHours()).padStart(2,"0")+":"+String(date.getMinutes()).padStart(2,"0");
+}
+function historyAnomalyDeleteButton(id){
+  var value=Number(id);
+  if(!isFinite(value)||value<=0)return "";
+  return " <button class='btn' style='padding:2px 8px;font-size:12px' onclick='deleteUsageSnapshot(this,"+Math.round(value)+")'>删除这条</button>";
+}
+function deleteUsageSnapshot(button,id){
+  var value=Number(id);
+  if(!isFinite(value)||value<=0)return Promise.resolve(false);
+  if(typeof window!=="undefined"&&window.confirm&&!window.confirm("删除这条异常采样？操作不可恢复。"))return Promise.resolve(false);
+  if(button)setBusy(button,true,"删除中…");
+  return fetchTimeout("/v0/resource/plugins/api-balance/usage-history?id="+encodeURIComponent(Math.round(value))+"&action=clear&_="+Date.now(),{method:"DELETE",cache:"no-store"},15000)
+    .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json().catch(function(){return {};});})
+    .then(function(){return loadServerHistory(null,true);})
+    .then(function(){msg("已删除这条异常采样","ok");return true;})
+    .catch(function(e){msg("删除异常采样失败："+e.message,"err");if(button)setBusy(button,false);return false;});
+}
 function historyLimitUsable(row){
   if(!historyNum(row&&row.limit))return false;
   var limit=Math.abs(Number(row.limit));
   var scale=Math.max(100,Math.abs(Number(row.balance)||0)+Math.abs(Number(row.used)||0));
   return limit<=1000000||limit<=scale*1000;
 }
-function historyRechargeDelta(previous,current){
-  if(!historyLimitUsable(previous)||!historyLimitUsable(current))return {value:null,suspicious:true};
-  var added=Number(current.limit)-Number(previous.limit);
-  if(added<=0)return {value:0,suspicious:false};
-  var baseline=Math.max(Math.abs(Number(previous.limit)),Math.abs(Number(current.balance)||0)+Math.abs(Number(current.used)||0));
-  var suspicious=added>Math.max(100,baseline*100);
-  return {value:suspicious?null:added,suspicious:suspicious};
+// 相邻两次采样之间：涌入的额度 = 余额上升量 + 用量增量。
+// 只依赖上游实测的余额与用量，避免“总额度”字段单位/解析异常时把真实充值当成噪声丢弃。
+function historyCashRow(item){
+  if(!item)return {at:"",balance:null,used:null,limit:null};
+  var balance=item.has_balance!==false&&historyNum(item.balance)&&!historyFieldAnomalous(item,"balance")?Number(item.balance):null;
+  var used=item.has_used!==false&&historyNum(item.used)&&!historyFieldAnomalous(item,"used")?Number(item.used):null;
+  var limit=historyNum(item.limit)&&!historyFieldAnomalous(item,"limit")?Number(item.limit):null;
+  return {at:String(item.observed_at||item.day||""),balance:balance,used:used,limit:limit};
+}
+function historyCashFlow(items){
+  var rows=(items||[]).map(historyCashRow).sort(function(a,b){return a.at.localeCompare(b.at);});
+  var flow={usage:0,usageKnown:false,inflow:0,inflowKnown:false,decrease:0,start:null,end:null,firstAt:"",lastAt:""};
+  var previous=null;
+  rows.forEach(function(row){
+    if(row.balance!==null){
+      if(flow.start===null){flow.start=row.balance;flow.firstAt=row.at;}
+      flow.end=row.balance;flow.lastAt=row.at;
+    }
+    if(previous){
+      if(previous.used!==null&&row.used!==null){
+        var usageDelta=row.used-previous.used;
+        if(usageDelta<0)usageDelta=row.used;   // 计数重置后按新基线计
+        flow.usageKnown=true;
+        if(usageDelta>1e-9)flow.usage+=usageDelta;
+      }
+      var added=null;
+      if(previous.balance!==null&&row.balance!==null){
+        added=previous.used!==null&&row.used!==null&&row.used>=previous.used?(row.balance+row.used)-(previous.balance+previous.used):row.balance-previous.balance;
+      }else if(previous.limit!==null&&row.limit!==null&&historyLimitUsable({limit:previous.limit})&&historyLimitUsable({limit:row.limit})){
+        added=row.limit-previous.limit;   // 只有额度、没有余额时退回按总额度字段估算
+      }
+      if(added!==null){
+        flow.inflowKnown=true;   // 可比对即为已知：没有增加就是 0
+        if(added>1e-6) flow.inflow+=added;
+        else if(added<-1e-9) flow.decrease+=-added;
+      }
+    }
+    previous=row;
+  });
+  return flow;
+}
+function historyCashTotals(items){
+  var groups={},order=[],byCurrency={};
+  var totals={currencies:[],byCurrency:byCurrency,accounts:{},usage:0,usageKnown:false,inflow:0,inflowKnown:false,decrease:0,start:0,startKnown:false,end:0,endKnown:false,net:0,netKnown:false,lateAccounts:0};
+  (items||[]).forEach(function(item){
+    if((item.kind||"balance")==="quota")return;
+    var currency=displayCurrency(item.currency||"");
+    var key=[String(item.account_key||""),currency].join("\0");
+    var group=groups[key]||(groups[key]={account:String(item.account_key||""),currency:currency,items:[]});
+    groups[key]=group;
+    if(order.indexOf(key)<0)order.push(key);
+    group.items.push(item);
+  });
+  var flows=order.map(function(key){return {group:groups[key],flow:historyCashFlow(groups[key].items)};});
+  var globalFirst="";
+  flows.forEach(function(entry){if(entry.flow.firstAt&&(!globalFirst||entry.flow.firstAt<globalFirst))globalFirst=entry.flow.firstAt;});
+  flows.forEach(function(entry){
+    var group=entry.group,flow=entry.flow;
+    var c=byCurrency[group.currency]||(byCurrency[group.currency]={currency:group.currency,accounts:{},usage:0,usageKnown:false,inflow:0,inflowKnown:false,decrease:0,start:0,startKnown:false,end:0,endKnown:false,net:0,netKnown:false,lateAccounts:0});
+    byCurrency[group.currency]=c;
+    if(totals.currencies.indexOf(group.currency)<0)totals.currencies.push(group.currency);
+    c.accounts[group.account]=true;
+    if(flow.start!==null&&flow.end!==null){c.start+=flow.start;c.end+=flow.end;c.startKnown=true;c.endKnown=true;}
+    if(flow.usageKnown){c.usage+=flow.usage;c.usageKnown=true;}
+    if(flow.inflowKnown){c.inflow+=flow.inflow;c.inflowKnown=true;}
+    c.decrease+=flow.decrease;
+    if(flow.firstAt&&globalFirst&&flow.firstAt.slice(0,10)>globalFirst.slice(0,10))c.lateAccounts++;
+  });
+  totals.currencies.forEach(function(currency){
+    var c=byCurrency[currency];
+    c.net=c.end-c.start;c.netKnown=c.startKnown&&c.endKnown;
+    Object.keys(c.accounts).forEach(function(account){totals.accounts[account]=true;});
+    if(c.netKnown){totals.start+=c.start;totals.end+=c.end;totals.startKnown=true;totals.endKnown=true;}
+    if(c.usageKnown){totals.usage+=c.usage;totals.usageKnown=true;}
+    if(c.inflowKnown){totals.inflow+=c.inflow;totals.inflowKnown=true;}
+    totals.decrease+=c.decrease;totals.lateAccounts+=c.lateAccounts;
+  });
+  totals.net=totals.end-totals.start;totals.netKnown=totals.startKnown&&totals.endKnown;
+  return totals;
 }
 function chartValue(item, metric){
-  if(metric==="remaining") return item.kind==="quota"&&historyNum(item.remaining)?Number(item.remaining):null;
+  if(metric==="remaining") return item.kind==="quota"&&historyNum(item.remaining)&&!historyFieldAnomalous(item,"remaining")?Number(item.remaining):null;
   if(item.kind==="quota") return null;
-  if(metric==="used") return item.has_used&&historyNum(item.used)?Number(item.used):null;
-  return item.has_balance!==false&&historyNum(item.balance)?Number(item.balance):null;
+  if(metric==="used") return item.has_used&&historyNum(item.used)&&!historyFieldAnomalous(item,"used")?Number(item.used):null;
+  return item.has_balance!==false&&historyNum(item.balance)&&!historyFieldAnomalous(item,"balance")?Number(item.balance):null;
 }
 function chartBucket(item, granularity){
   if(granularity==="day") return String(item.day||String(item.observed_at||"").slice(0,10));
@@ -420,7 +547,7 @@ function chartSeriesKey(item){return String(item.account_key||"")+"\0"+String(it
 function chartUsagePoints(items, granularity){
   var series={};
   items.forEach(function(item){
-    if(item.kind==="quota"||item.has_used===false||!historyNum(item.used))return;
+    if(item.kind==="quota"||item.has_used===false||!historyNum(item.used)||historyFieldAnomalous(item,"used"))return;
     var key=chartSeriesKey(item),list=series[key]||(series[key]=[]);
     list.push(item);
   });
@@ -443,88 +570,114 @@ function renderHistoryChart(){
   if(!box)return;
   var metric=((document.getElementById("historyMetric")||{}).value||"balance"),granularity=((document.getElementById("historyGranularity")||{}).value||"day");
   var labels={balance:"余额",used:"用量增加",remaining:"配额剩余"};if(legend)legend.textContent=labels[metric]||"指标";
-  var filtered=historyFilteredItems(),points,sampleCount;
+  var rawItems=historyFilteredItems(),split=historySplitItems(rawItems),filtered=split.clean,points,sampleCount=0,entryNote="";
+  var anomalyCount=split.anomalies.length;
   if(metric==="used"){
     points=chartUsagePoints(filtered,granularity);
     sampleCount=points.reduce(function(total,item){return total+item.count;},0);
   }else{
-    var latest={};
-    filtered.forEach(function(item){var value=chartValue(item,metric);if(value===null)return;var bucket=chartBucket(item,granularity),key=bucket+"\0"+String(item.account_key||"")+"\0"+String(item.kind||"")+"\0"+String(item.window||"")+"\0"+String(item.currency||"");if(!latest[key]||String(item.observed_at)>String(latest[key].observed_at))latest[key]=Object.assign({},item,{_bucket:bucket,_value:value});});
-    var sums={};Object.keys(latest).forEach(function(key){var item=latest[key],entry=sums[item._bucket]||(sums[item._bucket]={label:item._bucket,value:0,count:0});entry.value+=item._value;entry.count++;});
-    points=Object.keys(sums).sort().map(function(key){return sums[key];});sampleCount=latestCount(latest);
+    var series={},buckets={};
+    filtered.forEach(function(item){
+      var value=chartValue(item,metric);if(value===null)return;
+      var bucket=chartBucket(item,granularity),key=chartSeriesKey(item)+"\0"+String(item.kind||"")+"\0"+String(item.window||"");
+      var entry=series[key]||(series[key]={buckets:{}});
+      series[key]=entry;buckets[bucket]=true;
+      if(!entry.buckets[bucket])sampleCount++;
+      if(!entry.buckets[bucket]||String(item.observed_at)>=String(entry.buckets[bucket].at))entry.buckets[bucket]={value:value,at:String(item.observed_at||"")};
+    });
+    var keys=Object.keys(series),bucketKeys=Object.keys(buckets).sort();
+    keys.forEach(function(key){
+      var entry=series[key];
+      entry.list=Object.keys(entry.buckets).sort().map(function(bucket){return {bucket:bucket,value:entry.buckets[bucket].value};});
+      entry.cursor=0;entry.current=null;
+    });
+    // 每个时间点按账号取“最近一次已知的值”再求和：账号当天缺采样时总数不再凭空下跌。
+    points=bucketKeys.map(function(bucket){
+      var sum=0,count=0;
+      keys.forEach(function(key){
+        var entry=series[key],list=entry.list;
+        while(entry.cursor<list.length&&list[entry.cursor].bucket<=bucket){entry.current=list[entry.cursor].value;entry.cursor++;}
+        if(entry.current!==null){sum+=entry.current;count++;}
+      });
+      return {label:bucket,value:sum,count:count};
+    });
+    if(points.length&&keys.length&&points[0].count<keys.length)entryNote="；合计只包含已经开始采样的账号，账号首次采样之前的区间不计入";
   }
-  if(!points.length){box.innerHTML='<div class="empty-state">当前筛选范围没有可绘制的'+esc(labels[metric])+'数据。</div>';if(note)note.textContent=metric==="used"?"新增用量需要同一账号至少两次有效 used 采样；周期重置会重新建立基线。":"余额和配额剩余需要对应类型的有效采样。";return;}
+  if(!points.length){box.innerHTML='<div class="empty-state">当前筛选范围没有可绘制的'+esc(labels[metric])+'数据。</div>';if(note)note.textContent=(metric==="used"?"新增用量需要同一账号至少两次有效 used 采样；周期重置会重新建立基线。":"余额和配额剩余需要对应类型的有效采样。")+(anomalyCount?"已排除 "+anomalyCount+" 条数值超过 "+historyAnomalyLimit+" 的异常采样。":"");return;}
   var width=900,height=300,left=58,right=20,top=22,bottom=42,plotW=width-left-right,plotH=height-top-bottom,min=points.reduce(function(v,p){return Math.min(v,p.value);},points[0].value),max=points.reduce(function(v,p){return Math.max(v,p.value);},points[0].value),span=max-min||Math.max(Math.abs(max)*.1,1),lo=min-span*.12,hi=max+span*.12;
   function x(i){return points.length===1?left+plotW/2:left+i*plotW/(points.length-1);}function y(v){return top+(hi-v)/(hi-lo)*plotH;}function fmt(v){return Math.abs(v)>=1000?v.toLocaleString(undefined,{maximumFractionDigits:2}):String(Math.round(v*100)/100);}
   var grid="",ticks=4;for(var i=0;i<=ticks;i++){var value=lo+(hi-lo)*i/ticks,yy=y(value);grid+='<line class="grid-line" x1="'+left+'" y1="'+yy.toFixed(1)+'" x2="'+(width-right)+'" y2="'+yy.toFixed(1)+'"></line><text class="axis-label" x="'+(left-8)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end">'+esc(fmt(value))+'</text>';}
   var line=points.map(function(p,i){return (i?'L':'M')+x(i).toFixed(1)+" "+y(p.value).toFixed(1);}).join(" "),dots=points.map(function(p,i){return '<circle class="point" cx="'+x(i).toFixed(1)+'" cy="'+y(p.value).toFixed(1)+'" r="4"><title>'+esc(p.label)+" · "+esc(fmt(p.value))+" · "+p.count+" 个账号/窗口"+'</title></circle>';}).join(""),axis=points.map(function(p,i){if(points.length>12&&i%Math.ceil(points.length/8)!==0&&i!==points.length-1)return "";var label=granularity==="hour"?p.label.slice(5):p.label.slice(5);return '<text class="axis-label" x="'+x(i).toFixed(1)+'" y="'+(height-14)+'" text-anchor="middle">'+esc(label)+'</text>';}).join("");
   var zero=(lo<0&&hi>0)?'<line class="zero-line" x1="'+left+'" y1="'+y(0).toFixed(1)+'" x2="'+(width-right)+'" y2="'+y(0).toFixed(1)+'"></line>':'';
   box.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+esc(labels[metric])+"趋势图，"+points.length+" 个时间点"+'"><g>'+grid+zero+'</g><path class="line" d="'+line+'"></path>'+dots+'<g>'+axis+'</g></svg>';
-  if(note)note.textContent="共 "+points.length+" 个"+(granularity==="hour"?"小时":"日期")+"，合计 "+sampleCount+" 个有效"+(metric==="used"?"用量增量":"账号/窗口采样")+"；多账号按当前筛选范围求和。";
+  if(note)note.textContent="共 "+points.length+" 个"+(granularity==="hour"?"小时":"日期")+"，合计 "+sampleCount+" 个有效"+(metric==="used"?"用量增量":"账号/窗口采样")+"；多账号按当前筛选范围求和"+entryNote+"。"+(anomalyCount?"已排除 "+anomalyCount+" 条异常采样（数值超过 "+historyAnomalyLimit+"），可在周期总览中逐条查看或删除。":"");
 }
-function latestCount(items){var seen={};Object.keys(items).forEach(function(k){seen[items[k]._bucket+"\0"+items[k].account_key+"\0"+items[k].kind+"\0"+items[k].window]=true;});return Object.keys(seen).length;}
 function renderHistorySummary(){
-  var items=historyFilteredItems(), bounds=historyBounds(), groups={}, cash={}, quota={}, accounts={}, suspiciousRechargeCount=0;
-  items.forEach(function(x){
-    var kind=x.kind||"balance", currency=displayCurrency(x.currency||(kind==="quota"?"积分":"")), window=kind==="quota"?(x.window||"配额"):"余额";
-    var key=[x.account_key,kind,currency,window].join("\0"), g=groups[key]||(groups[key]={items:[],kind:kind,currency:currency,window:window,account:x.account_key});
-    g.items.push(x); accounts[x.account_key]=true;
+  var rawItems=historyFilteredItems(),split=historySplitItems(rawItems),items=split.clean,anomalies=split.anomalies;
+  var bounds=historyBounds(),accounts={},quota={},quotaGroups={};
+  var cash=historyCashTotals(items);
+  rawItems.forEach(function(item){accounts[String(item.account_key||"")]=true;});
+  items.forEach(function(item){
+    if((item.kind||"balance")!=="quota")return;
+    var account=String(item.account_key||""),window=item.window||"配额",key=[account,window].join("\0");
+    var group=quotaGroups[key]||(quotaGroups[key]={account:account,window:window,rows:[]});
+    quotaGroups[key]=group;group.rows.push(item);
   });
-  var cashCurrencies=[], quotaWindows={};
-  Object.keys(groups).forEach(function(key){
-    var g=groups[key], rows=g.items.slice().sort(function(a,b){return String(a.observed_at).localeCompare(String(b.observed_at));});
-    if(!rows.length) return;
-    if(g.kind==="quota"){
-      var q=quota[g.window]||(quota[g.window]={consumed:0,consumedKnown:false,current:0,currentKnown:true,accounts:{}});
-      q.accounts[g.account]=true;
-      var last=rows[rows.length-1];
-      if(historyNum(last.remaining)) q.current+=Number(last.remaining); else q.currentKnown=false;
-      for(var qi=1;qi<rows.length;qi++){
-        if(historyNum(rows[qi-1].remaining)&&historyNum(rows[qi].remaining)){
-          var used=Number(rows[qi-1].remaining)-Number(rows[qi].remaining);
-          if(used>=0){q.consumed+=used;q.consumedKnown=true;}
-        }
+  Object.keys(quotaGroups).forEach(function(key){
+    var group=quotaGroups[key],rows=group.rows.slice().sort(function(a,b){return String(a.observed_at).localeCompare(String(b.observed_at));});
+    var q=quota[group.window]||(quota[group.window]={consumed:0,consumedKnown:false,current:0,currentKnown:true,accounts:{}});
+    q.accounts[group.account]=true;
+    var last=rows[rows.length-1];
+    if(historyNum(last.remaining)) q.current+=Number(last.remaining); else q.currentKnown=false;
+    for(var qi=1;qi<rows.length;qi++){
+      if(historyNum(rows[qi-1].remaining)&&historyNum(rows[qi].remaining)){
+        var used=Number(rows[qi-1].remaining)-Number(rows[qi].remaining);
+        if(used>=0){q.consumed+=used;q.consumedKnown=true;}
       }
-      quotaWindows[g.window]=true;
-      return;
     }
-    var c=cash[g.currency]||(cash[g.currency]={current:0,currentKnown:true,hasCurrent:false,usage:0,usageKnown:false,recharge:0,rechargeKnown:false,balanceChange:0,balanceChangeKnown:false,accounts:{}});
-    if(cashCurrencies.indexOf(g.currency)<0) cashCurrencies.push(g.currency);
-    c.accounts[g.account]=true;
-    var first=rows[0], latest=rows[rows.length-1];
-    if(historyNum(latest.balance)){c.current+=Number(latest.balance);c.hasCurrent=true;} else c.currentKnown=false;
-    if(historyNum(first.balance)&&historyNum(latest.balance)){c.balanceChange+=Number(latest.balance)-Number(first.balance);c.balanceChangeKnown=true;}
-    if(historyNum(first.used)&&historyNum(latest.used)){
-      var totalUsage=Number(latest.used)-Number(first.used);
-      if(totalUsage>=0){c.usage+=totalUsage;c.usageKnown=true;}
-    }
-    var recharge=historyRechargeDelta(first,latest);
-    if(recharge.suspicious){suspiciousRechargeCount++;c.rechargeKnown=true;}
-    else if(recharge.value>0){c.recharge+=recharge.value;c.rechargeKnown=true;}
   });
-  var usage=0,usageKnown=false,recharge=0,rechargeKnown=false,balanceChange=0,balanceChangeKnown=false;
-  Object.keys(cash).forEach(function(currency){var c=cash[currency];if(c.usageKnown){usage+=c.usage;usageKnown=true;}if(c.rechargeKnown){recharge+=c.recharge;rechargeKnown=true;}if(c.balanceChangeKnown){balanceChange+=c.balanceChange;balanceChangeKnown=true;}});
   var quotaUsed=0,quotaUsedKnown=false;
   Object.keys(quota).forEach(function(window){if(quota[window].consumedKnown){quotaUsed+=quota[window].consumed;quotaUsedKnown=true;}});
   var range=document.getElementById("historySummaryRange");
-  if(range) range.textContent=(bounds.label||"当前范围")+" · "+bounds.from+" 至 "+bounds.to+" · "+items.length+" 条采样 / "+Object.keys(accounts).length+" 个账号";
+  if(range) range.textContent=(bounds.label||"当前范围")+" · "+bounds.from+" 至 "+bounds.to+" · "+rawItems.length+" 条采样 / "+Object.keys(accounts).length+" 个账号"+(anomalies.length?" · 异常 "+anomalies.length+" 条":"");
   var usageEl=document.getElementById("historyUsage"), rechargeEl=document.getElementById("historyRecharge"), changeEl=document.getElementById("historyBalanceChange"), quotaEl=document.getElementById("historyQuotaUsed"), samplesEl=document.getElementById("historySamples");
-  if(usageEl) usageEl.textContent=historySummaryNumber(usage,usageKnown,cashCurrencies);
-  if(rechargeEl) rechargeEl.textContent=historySummaryNumber(recharge,rechargeKnown,cashCurrencies);
-  if(changeEl) changeEl.textContent=historySummaryNumber(balanceChange,balanceChangeKnown,cashCurrencies);
+  if(usageEl) usageEl.textContent=historySummaryNumber(cash.usage,cash.usageKnown,cash.currencies);
+  if(rechargeEl) rechargeEl.textContent=historySummaryNumber(cash.inflow,cash.inflowKnown,cash.currencies);
+  if(changeEl) changeEl.textContent=historySummaryNumber(cash.net,cash.netKnown,cash.currencies);
   if(quotaEl) quotaEl.textContent=quotaUsedKnown?historyAmount(quotaUsed,"积分"):"—";
-  if(samplesEl) samplesEl.textContent=items.length+" / "+Object.keys(accounts).length;
+  if(samplesEl) samplesEl.textContent=rawItems.length+" / "+Object.keys(accounts).length;
   var lines=[];
-  cashCurrencies.sort().forEach(function(currency){
-    var c=cash[currency], accountCount=Object.keys(c.accounts).length;
-    lines.push("<b>"+esc(currency)+" 现金（"+accountCount+" 个账号）</b>：当前余额 "+esc(c.hasCurrent&&c.currentKnown?historyAmount(c.current,currency):"—")+" · 用量增加 "+esc(c.usageKnown?historyAmount(c.usage,currency):"—")+" · 总额度增加 "+esc(c.rechargeKnown?historyAmount(c.recharge,currency):"—")+" · 余额变化 "+esc(c.balanceChangeKnown?historyAmount(c.balanceChange,currency):"—"));
+  cash.currencies.slice().sort().forEach(function(currency){
+    var c=cash.byCurrency[currency],accountCount=Object.keys(c.accounts).length;
+    var parts=["期初 "+(c.netKnown?historyAmount(c.start,currency):"—"),"当前 "+(c.netKnown?historyAmount(c.end,currency):"—"),"余额变化 "+(c.netKnown?historyAmount(c.net,currency):"—"),"用量增加 "+(c.usageKnown?historyAmount(c.usage,currency):"—"),"总额度增加 "+(c.inflowKnown?historyAmount(c.inflow,currency):"—")];
+    lines.push("<b>"+esc(currency)+" 现金（"+accountCount+" 个账号）</b>："+esc(parts.join(" · ")));
+    if(c.netKnown&&c.inflowKnown){
+      var check=c.usageKnown
+        ?"对账：余额变化 "+historyAmount(c.net,currency)+" = 总额度增加 "+historyAmount(c.inflow,currency)+" − 用量增加 "+historyAmount(c.usage,currency)
+        :"对账：缺少用量计数，余额变化 "+historyAmount(c.net,currency)+" = 总额度增加 "+historyAmount(c.inflow,currency);
+      if(c.decrease>0.004) check+=" − 其他扣减 "+historyAmount(c.decrease,currency)+"（余额下降未对应用量计数，可能来自赠送额度、套餐额度或采样间隔）";
+      lines.push("<span class='tip'>"+esc(check)+"</span>");
+    }
   });
   Object.keys(quota).sort().forEach(function(window){
     var q=quota[window];
     lines.push("<b>积分 / "+esc(window)+"（"+Object.keys(q.accounts).length+" 个账号）</b>：配额消耗 "+esc(q.consumedKnown?historyAmount(q.consumed,"积分"):"—")+" · 当前剩余 "+esc(q.currentKnown?historyAmount(q.current,"积分"):"—"));
   });
+  if(anomalies.length){
+    lines.push("<b>异常数据（"+anomalies.length+" 条，数值超过 "+historyAnomalyLimit+"，已排除在汇总之外）</b>");
+    anomalies.slice(0,20).forEach(function(hit){
+      var item=hit.item,currency=historyItemCurrency(item);
+      lines.push("<div class='tip' style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px'><span>"+esc(historyAnomalyTime(item))+" · "+esc(historyAccountLabel(item.account_key))+" · "+esc(historyAnomalyText(hit,currency))+"</span>"+historyAnomalyDeleteButton(item.id)+"</div>");
+    });
+    if(anomalies.length>20) lines.push("<div class='tip'>其余 "+(anomalies.length-20)+" 条可在下方“用量历史”表中查看并删除。</div>");
+  }
   var box=document.getElementById("historySummaryBreakdown");
-  if(box){var note=lines.length?lines.join("<br>"):"当前范围没有符合筛选条件的有效历史采样。用量需要至少两次有效采样；总额度增加会标注为可能充值/套餐调整，不代表插件执行了充值。";if(suspiciousRechargeCount)note+="<br><span class='tip'>已忽略 "+suspiciousRechargeCount+" 次异常总额度跳变（可能是上游单位或解析变化），未计入可能充值。</span>";note+="<br><span class='tip'>采样数是服务器原始快照条数，历史表按日期、账号、类型和币种合并展示。</span>";box.innerHTML=note;}
+  if(box){
+    var note=lines.length?lines.join("<br>"):"当前范围没有符合筛选条件的有效历史采样。用量需要至少两次有效采样；总额度增加由余额上升和用量增量推算，不代表插件执行了充值。";
+    if(cash.lateAccounts) note+="<br><span class='tip'>区间内有 "+cash.lateAccounts+" 个账号较晚才开始采样：其首次余额计入期初，因此趋势图在这些账号出现之前只合计已采样账号。</span>";
+    note+="<br><span class='tip'>采样数是服务器原始快照条数，历史表按日期、账号、类型和币种合并展示；数值超过 "+historyAnomalyLimit+" 的采样视为异常，不计入汇总，可逐条删除。</span>";
+    box.innerHTML=note;
+  }
 }
 function renderServerHistory(){
   var box=document.getElementById("dailyRows");
@@ -534,14 +687,24 @@ function renderServerHistory(){
   renderHistoryProviderOptions();
   var currencies=[]; (serverHistory||[]).forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":""));if(currencies.indexOf(c)<0)currencies.push(c);}); renderCurrencyOptions("dailyCurrency",currencies);
   if(!items.length){box.innerHTML='<div class="empty-state">当前范围暂无服务器历史记录。点击“立即查询全部”可采集新的余额快照。</div>';return;}
-  var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
+  var groups={}; items.forEach(function(x){var c=displayCurrency(x.currency|| (x.kind==="quota"?"积分":"")), k=[x.day,x.account_key,x.kind||"balance",c,x.window||""].join("\0"),g=groups[k]||(groups[k]={first:x,last:x,rows:[],currency:c,kind:x.kind||"balance",window:x.window||"",key:x.account_key,provider:x.provider}); g.rows.push(x); if(String(x.observed_at)<String(g.first.observed_at))g.first=x;if(String(x.observed_at)>String(g.last.observed_at))g.last=x;});
   var html="<table><thead><tr><th>日期</th><th>站点地址</th><th>类型</th><th>首值</th><th>末值</th><th>变化判断</th><th>采样来源</th></tr></thead><tbody>";
-  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="";
+  Object.keys(groups).sort().reverse().forEach(function(k){var g=groups[k],a=g.first,b=g.last,name=credentialByKey(g.key),label=name.label||name.name||g.provider||g.key,change="单次采样",extra="",groupAnomalies=[];g.rows.forEach(function(row){var hits=historyAnomalyFields(row);if(hits.length)groupAnomalies.push({item:row,fields:hits});});
     if(g.kind==="quota") { var d=historyNum(a.remaining)&&historyNum(b.remaining)?Number(b.remaining)-Number(a.remaining):null; change=d===null?"无法计算":(d>0?"剩余增加 +"+historyAmount(d,"积分"):d<0?"剩余消耗 "+historyAmount(d,"积分"):"无变化"); extra=g.window||"配额"; }
-    else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,ld=historyRechargeDelta(a,b),ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ld.value!==null||ld.suspicious||ud!==null){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(ld.suspicious)change.push("总额度异常跳变，已忽略");else if(ld.value>0)change.push("总额度增加（可能充值/套餐调整） +"+historyAmount(ld.value,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
-    html+="<tr><td>"+esc(a.day)+"</td><td><b>"+esc(name.base_url||"未提供站点地址")+"</b><div class='tip'>"+esc((g.provider||name.provider||"未知供应商")+" | "+(name.label||name.name||g.key))+"</div></td><td>"+esc(g.kind==="quota"?"配额 · "+extra:"余额 · "+g.currency)+"</td><td>"+(g.kind==="quota"?historyAmount(a.remaining,"积分"):historyAmount(a.balance,g.currency))+"</td><td>"+(g.kind==="quota"?historyAmount(b.remaining,"积分"):historyAmount(b.balance,g.currency))+"</td><td>"+esc(change)+"</td><td>"+esc(a.source||"manual")+" → "+esc(b.source||"manual")+"</td></tr>";
+    else { var bd=historyNum(a.balance)&&historyNum(b.balance)?Number(b.balance)-Number(a.balance):null,flow=historyCashFlow(g.rows),ud=historyNum(a.used)&&historyNum(b.used)?Number(b.used)-Number(a.used):null; if(bd!==null||ud!==null||flow.inflowKnown){change=[];if(bd!==null&&bd>0)change.push("余额增加（可能充值/退款/赠送） +"+historyAmount(bd,g.currency));else if(bd!==null&&bd<0)change.push("余额减少 "+historyAmount(bd,g.currency));if(flow.inflow>0.004&&flow.inflow>(bd!==null&&bd>0?bd:0)+0.004)change.push("总额度增加（推算充值/套餐调整） +"+historyAmount(flow.inflow,g.currency));if(ud!==null&&ud>0)change.push("用量增加 "+historyAmount(ud,g.currency));if(!change.length)change.push("无明显变化");change=change.join("；");} }
+    var changeHtml="";
+    if(groupAnomalies.length){
+      changeHtml="<span class='tag no'>异常</span>";
+      groupAnomalies.slice(0,3).forEach(function(hit){
+        changeHtml+="<div class='tip' style='display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px'><span>"+esc(historyAnomalyTime(hit.item))+" "+esc(historyAnomalyText(hit,historyItemCurrency(hit.item)))+"</span>"+historyAnomalyDeleteButton(hit.item.id)+"</div>";
+      });
+      if(groupAnomalies.length>3)changeHtml+="<div class='tip'>其余 "+(groupAnomalies.length-3)+" 条未展开</div>";
+    }else{
+      changeHtml=esc(change);
+    }
+    html+="<tr><td>"+esc(a.day)+"</td><td><b>"+esc(name.base_url||"未提供站点地址")+"</b><div class='tip'>"+esc((g.provider||name.provider||"未知供应商")+" | "+(name.label||name.name||g.key))+"</div></td><td>"+esc(g.kind==="quota"?"配额 · "+extra:"余额 · "+g.currency)+"</td><td>"+(g.kind==="quota"?historyAmount(a.remaining,"积分"):historyAmount(a.balance,g.currency))+"</td><td>"+(g.kind==="quota"?historyAmount(b.remaining,"积分"):historyAmount(b.balance,g.currency))+"</td><td>"+changeHtml+"</td><td>"+esc(a.source||"manual")+" → "+esc(b.source||"manual")+"</td></tr>";
   });
-  box.innerHTML=truncationNote+html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。</div>";
+  box.innerHTML=truncationNote+html+"</tbody></table><div class='tip'>“余额增加”是账单观测结果，不代表插件完成了充值。真正充值请进入对应供应商控制台；GLM 等配额窗口显示的是积分/剩余量和重置时间，不与现金余额合计。数值超过 "+historyAnomalyLimit+" 的采样标记为异常，不计入周期总览与趋势图，可在这里逐条删除。</div>";
 }
 function resetHistorySummary(message){
   var range=document.getElementById("historySummaryRange"), breakdown=document.getElementById("historySummaryBreakdown");

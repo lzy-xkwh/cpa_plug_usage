@@ -303,6 +303,7 @@ func boolInt(value bool) int {
 }
 
 type usageHistoryRequest struct {
+	ID       int64  `json:"id"`
 	From     string `json:"from"`
 	To       string `json:"to"`
 	Key      string `json:"key"`
@@ -324,6 +325,10 @@ func normalizedHistoryRange(req usageHistoryRequest) (string, string) {
 }
 
 func usageHistoryWhere(req usageHistoryRequest) (string, []any) {
+	if req.ID > 0 {
+		// 按单条快照删除/查询时忽略日期范围，避免日期默认值把目标记录挡在外面。
+		return "id = ?", []any{req.ID}
+	}
 	from, to := normalizedHistoryRange(req)
 	where := "day >= ? AND day <= ?"
 	args := []any{from, to}
@@ -432,7 +437,7 @@ func usageHistoryResponse(req usageHistoryRequest) (map[string]any, error) {
 		if scanErr = rows.Scan(&id, &observedAt, &day, &accountKey, &provider, &currency, &kind, &window, &balance, &used, &limitValue, &remaining, &fraction, &resetTime, &hasBalance, &hasUsed, &hasLimit, &source); scanErr != nil {
 			return nil, fmt.Errorf("解析用量历史失败: %w", scanErr)
 		}
-		item = map[string]any{"observed_at": observedAt, "day": day, "account_key": accountKey, "provider": provider, "currency": currency, "kind": kind, "window": window, "reset_time": resetTime, "source": source, "has_balance": hasBalance != 0, "has_used": hasUsed != 0, "has_limit": hasLimit != 0}
+		item = map[string]any{"id": id, "observed_at": observedAt, "day": day, "account_key": accountKey, "provider": provider, "currency": currency, "kind": kind, "window": window, "reset_time": resetTime, "source": source, "has_balance": hasBalance != 0, "has_used": hasUsed != 0, "has_limit": hasLimit != 0}
 		if balance.Valid { item["balance"] = balance.Float64 }
 		if used.Valid { item["used"] = used.Float64 }
 		if limitValue.Valid { item["limit"] = limitValue.Float64 }

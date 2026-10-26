@@ -461,7 +461,7 @@ func pluginRegistrationResponse() pluginRegistration {
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
 			Name:             pluginID,
-			Version:          "0.9.24",
+			Version:          "0.9.25",
 			Author:           "community",
 			GitHubRepository: "https://github.com/lzy-xkwh/cpa_plug_usage",
 			ConfigFields: []configField{
@@ -1927,6 +1927,11 @@ func handleManagementRPC(request []byte) ([]byte, error) {
 		historyReq.Provider = firstQuery(req.Query, "provider")
 		historyReq.Source = firstQuery(req.Query, "source")
 		historyReq.Currency = firstQuery(req.Query, "currency")
+		if idText := strings.TrimSpace(firstQuery(req.Query, "id")); idText != "" {
+			if id, convErr := strconv.ParseInt(idText, 10, 64); convErr == nil && id > 0 {
+				historyReq.ID = id
+			}
+		}
 		if req.Method == http.MethodDelete || (req.Method == http.MethodGet && firstQuery(req.Query, "action") == "clear") {
 			if err := clearUsageHistory(historyReq); err != nil {
 				return nil, err

@@ -198,9 +198,9 @@ test('selected account refresh queries only the clicked account', async () => {
 test('history summary calculates usage, possible recharge, balance change, and quota consumption', () => {
   const {context, element} = loadWizard();
   context.serverHistory = [
-    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:100,limit:100,balance:10},
-    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:130,limit:120,balance:7},
-    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:150,limit:120,balance:5},
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:900,limit:1000,balance:100},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:930,limit:1000,balance:70},
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:950,limit:1070,balance:120},
     {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'quota',provider:'glm',currency:'积分',kind:'quota',window:'5 小时',remaining:100},
     {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'quota',provider:'glm',currency:'积分',kind:'quota',window:'5 小时',remaining:70}
   ];
@@ -209,52 +209,137 @@ test('history summary calculates usage, possible recharge, balance change, and q
   element('dailyTo').value = '2026-09-28';
   context.renderHistorySummary();
   assert.equal(element('historyUsage').textContent, 'CNY 50');
-  assert.equal(element('historyRecharge').textContent, 'CNY 20');
-  assert.equal(element('historyBalanceChange').textContent, 'CNY -5');
+  assert.equal(element('historyRecharge').textContent, 'CNY 70');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY 20');
   assert.equal(element('historyQuotaUsed').textContent, '积分 30');
-  assert.match(element('historySummaryBreakdown').innerHTML, /总额度增加 CNY 20/);
-  assert.match(element('historySummaryBreakdown').innerHTML, /配额消耗 积分 30/);
+  const breakdown = element('historySummaryBreakdown').innerHTML;
+  assert.match(breakdown, /期初 CNY 100/);
+  assert.match(breakdown, /当前 CNY 120/);
+  assert.match(breakdown, /总额度增加 CNY 70/);
+  assert.match(breakdown, /余额变化 CNY 20 = 总额度增加 CNY 70 − 用量增加 CNY 50/);
+  assert.match(breakdown, /配额消耗 积分 30/);
 });
 
 
-test('history summary ignores implausible limit jumps as recharge', () => {
+test('history summary lists samples above the anomaly threshold instead of counting them', () => {
   const {context, element} = loadWizard();
   context.serverHistory = [
-    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:10,limit:100,balance:90},
-    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:20,limit:100000000,balance:80}
+    {id:11,observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:10,limit:100,balance:90},
+    {id:12,observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash',provider:'relay',currency:'CNY',kind:'balance',used:20,limit:100000000,balance:99999990}
   ];
   context.historyRange = 'today';
   element('dailyFrom').value = '2026-09-28';
   element('dailyTo').value = '2026-09-28';
   context.renderHistorySummary();
-  assert.equal(element('historyRecharge').textContent, 'CNY 0');
-  assert.match(element('historySummaryBreakdown').innerHTML, /异常总额度跳变/);
+  // 异常采样不参与汇总：宁可显示未知，也不把 1 亿当成充值。
+  assert.equal(element('historyRecharge').textContent, '—');
+  const breakdown = element('historySummaryBreakdown').innerHTML;
+  assert.match(breakdown, /异常数据（1 条，数值超过 10000/);
+  assert.match(breakdown, /99,999,990/);
+  assert.match(breakdown, /deleteUsageSnapshot\(this,12\)/);
+  assert.match(element('historySummaryRange').textContent, /异常 1 条/);
 });
-test('history summary uses filtered first and last values only', () => {
+
+test('deleting one abnormal sample calls the history API with its id', async () => {
+  const calls = [];
+  const {context} = loadWizard({fetch: async (url, opts) => {
+    calls.push({url, method: (opts||{}).method});
+    return {ok:true, json:async () => ({items:[]})};
+  }});
+  const removed = await context.deleteUsageSnapshot(null, 4821);
+  assert.equal(removed, true);
+  assert.equal(calls.length, 2);              // 删除 + 重新读取历史
+  assert.equal(calls[0].method, 'DELETE');
+  assert.match(calls[0].url, /usage-history\?id=4821&action=clear/);
+});
+test('history summary uses filtered first and last values per account', () => {
   const {context, element} = loadWizard();
   context.serverHistory = [
-    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:100,limit:100,balance:10},
-    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:110,limit:99999835,balance:9},
-    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:120,limit:100.0002,balance:8},
+    {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:10,limit:100,balance:100},
+    {observed_at:'2026-09-28T12:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:11,limit:99999835,balance:99},
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-a',provider:'relay',currency:'CNY',kind:'balance',used:12,limit:100.0002,balance:98},
     {observed_at:'2026-09-28T09:00:00Z',day:'2026-09-28',account_key:'cash-b',provider:'other',currency:'CNY',kind:'balance',used:0,limit:50,balance:20},
-    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-b',provider:'other',currency:'CNY',kind:'balance',used:5,limit:70,balance:15}
+    {observed_at:'2026-09-28T18:00:00Z',day:'2026-09-28',account_key:'cash-b',provider:'other',currency:'CNY',kind:'balance',used:5,limit:70,balance:35}
   ];
   context.historyRange = 'today';
   element('dailyFrom').value = '2026-09-28';
   element('dailyTo').value = '2026-09-28';
   element('dailyAccount').value = 'cash-a';
   context.renderHistorySummary();
-  assert.equal(element('historySummaryRange').textContent, 'today · 2026-09-28 至 2026-09-28 · 3 条采样 / 1 个账号');
-  assert.equal(element('historyUsage').textContent, 'CNY 20');
-  assert.equal(element('historyRecharge').textContent, 'CNY 0.0002');
+  assert.equal(element('historySummaryRange').textContent, 'today · 2026-09-28 至 2026-09-28 · 3 条采样 / 1 个账号 · 异常 1 条');
+  assert.equal(element('historyUsage').textContent, 'CNY 2');
+  assert.equal(element('historyRecharge').textContent, 'CNY 0');
   assert.equal(element('historyBalanceChange').textContent, 'CNY -2');
-  assert.doesNotMatch(element('historySummaryBreakdown').innerHTML, /99,998/);
+  // 异常的总额度字段被排除，但会带着原值列出来让用户自己判断。
+  assert.match(element('historySummaryBreakdown').innerHTML, /总额度 CNY 99,999,835/);
+  assert.doesNotMatch(element('historySummaryBreakdown').innerHTML, /总额度增加 CNY 99/);
 
   element('dailyAccount').value = 'cash-b';
   context.renderHistorySummary();
   assert.equal(element('historySummaryRange').textContent, 'today · 2026-09-28 至 2026-09-28 · 2 条采样 / 1 个账号');
   assert.equal(element('historyUsage').textContent, 'CNY 5');
   assert.equal(element('historyRecharge').textContent, 'CNY 20');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY 15');
+});
+test('period summary reconciles with the balance curve when the provider limit field is noise', () => {
+  const {context, element} = loadWizard();
+  // 还原截图场景：余额曲线明显抬高了一次，而上游“总额度”字段只有 0.0083 的漂移。
+  context.serverHistory = [
+    {observed_at:'2026-10-20T09:00:00Z',day:'2026-10-20',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:101.3,used:900,limit:1001.3},
+    {observed_at:'2026-10-21T09:00:00Z',day:'2026-10-21',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:95.87,used:905.43,limit:1001.3083},
+    {observed_at:'2026-10-24T09:00:00Z',day:'2026-10-24',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:101.3,used:905.43,limit:1006.73},
+    {observed_at:'2026-10-25T09:00:00Z',day:'2026-10-25',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:98,used:908.73,limit:1006.73}
+  ];
+  context.historyRange = 'custom';
+  element('dailyFrom').value = '2026-10-20';
+  element('dailyTo').value = '2026-10-25';
+  context.renderHistorySummary();
+  assert.equal(element('historyUsage').textContent, 'CNY 8.73');
+  assert.equal(element('historyRecharge').textContent, 'CNY 5.43');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY -3.3');
+  assert.match(element('historySummaryBreakdown').innerHTML, /余额变化 CNY -3.3 = 总额度增加 CNY 5.43 − 用量增加 CNY 8.73/);
+  assert.doesNotMatch(element('historySummaryBreakdown').innerHTML, /异常数据（/);
+
+  element('historyMetric').value = 'balance';
+  element('historyGranularity').value = 'day';
+  context.renderHistoryChart();
+  const html = element('historyChart').innerHTML;
+  assert.match(html, /2026-10-24 · 101\.3 · 1 个账号/);
+  assert.match(html, /2026-10-25 · 98 · 1 个账号/);
+  assert.match(element('historyChartNote').textContent, /合计 4 个有效/);
+});
+test('balance chart carries each account forward instead of dropping accounts without a sample', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-10-01T09:00:00Z',day:'2026-10-01',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:100},
+    {observed_at:'2026-10-02T09:00:00Z',day:'2026-10-02',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:90},
+    {observed_at:'2026-10-03T09:00:00Z',day:'2026-10-03',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:80},
+    {observed_at:'2026-10-01T09:00:00Z',day:'2026-10-01',account_key:'b',provider:'relay',currency:'CNY',kind:'balance',balance:50},
+    {observed_at:'2026-10-03T09:00:00Z',day:'2026-10-03',account_key:'b',provider:'relay',currency:'CNY',kind:'balance',balance:40}
+  ];
+  element('historyMetric').value = 'balance';
+  element('historyGranularity').value = 'day';
+  context.renderHistoryChart();
+  const html = element('historyChart').innerHTML;
+  assert.match(html, /2026-10-02 · 140 · 2 个账号/);
+  assert.match(html, /2026-10-03 · 120 · 2 个账号/);
+});
+test('history summary and chart explain accounts that start sampling later', () => {
+  const {context, element} = loadWizard();
+  context.serverHistory = [
+    {observed_at:'2026-10-01T09:00:00Z',day:'2026-10-01',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:100,used:900},
+    {observed_at:'2026-10-02T09:00:00Z',day:'2026-10-02',account_key:'a',provider:'relay',currency:'CNY',kind:'balance',balance:90,used:910},
+    {observed_at:'2026-10-02T09:00:00Z',day:'2026-10-02',account_key:'b',provider:'relay',currency:'CNY',kind:'balance',balance:50,used:0}
+  ];
+  context.historyRange = 'custom';
+  element('dailyFrom').value = '2026-10-01';
+  element('dailyTo').value = '2026-10-02';
+  context.renderHistorySummary();
+  assert.equal(element('historyRecharge').textContent, 'CNY 0');
+  assert.equal(element('historyBalanceChange').textContent, 'CNY -10');
+  assert.match(element('historySummaryBreakdown').innerHTML, /1 个账号较晚才开始采样/);
+  context.renderHistoryChart();
+  assert.match(element('historyChartNote').textContent, /账号首次采样之前的区间不计入/);
 });
 test('configuration opens above account list and focuses the selected form', () => {
   const html = fs.readFileSync(require.resolve('./wizard.html'), 'utf8');
